@@ -82,6 +82,7 @@ product behavior, `docs/SPEC.md` wins; ask before deviating from either.
 ## Notes
 
 - `@docs/SPEC.md` is the full specification. `@docs/` holds any split-out design notes.
+- Plans: write the working plan to plan.md at the root for annotation; once I approve it, archive it to `docs/plans/plan_NNN_<slug>.md` and commit. Read existing plans there for prior-slice decisions before planning a new slice.
 - Keep this file under ~150 lines. When the agent makes the same mistake twice,
   the fix is a new rule here — not re-explaining in chat. (That habit is the
   whole point: engineer the harness so the mistake can't recur.)
