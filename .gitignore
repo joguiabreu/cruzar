@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# financial data & secrets — never commit
+/data/
+/reports/
+*.db
+*.sqlite
+*.sqlite3
+.env
+config/sources.yaml
