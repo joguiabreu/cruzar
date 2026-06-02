@@ -191,8 +191,12 @@ Columns: Raw Description | LLM-Proposed Merchant | LLM-Proposed Category
 - closing_balance (native currency, account's cash balance at period_end;
   for investment accounts this is uninvested cash). Source for Net Worth and
   for total investment value in ADR-14.
-- processed_file_id (FK)
 - created_at
+- Provenance is held one-directionally on `processed_files.statement_id` (a
+  file is processed into at most one statement). There is no
+  `statements.processed_file_id` back-reference — storing both would create a
+  circular FK requiring nullable columns and insert-order backfill. "Which file
+  produced this statement?" is answered by querying processed_files.
 
 ### transactions
 

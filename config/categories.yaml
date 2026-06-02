@@ -1,0 +1,21 @@
+# Category vocabulary (SPEC §Inputs). Seeded into the `categories` table each
+# run; SQLite is the source of truth (ADR-3).
+categories:
+  - Income
+  - Transfer
+  - Groceries
+  - Dining
+  - Transport
+  - Fuel
+  - Utilities
+  - Rent/Mortgage
+  - Insurance
+  - Health
+  - Shopping
+  - Entertainment
+  - Subscriptions
+  - Travel
+  - Fees & Charges
+  - Taxes
+  - Education
+  - Other

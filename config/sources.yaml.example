@@ -1,0 +1,10 @@
+# Source allowlist (SPEC §Inputs). One entry per ACCOUNT. Copy to
+# config/sources.yaml (gitignored) and fill in real values. Adding an account
+# is a yaml edit, not a code change (AC7) — unless its format needs a new parser.
+accounts:
+  - institution: activobank        # selects parsers/<institution>.py
+    name: Conta Simples
+    account_match: activobank      # manual path: folder under data/inbox/<account_match>/
+    source_type: manual
+    account_type: checking
+    currency: EUR

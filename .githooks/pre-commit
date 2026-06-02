@@ -1,0 +1,10 @@
+#!/bin/sh
+# Deterministic PII guard (see .githooks/check_pii.py). Runs under uv so
+# pdfplumber is available for scanning staged PDF text; falls back to system
+# python3 if uv is absent.
+root="$(git rev-parse --show-toplevel)"
+if command -v uv >/dev/null 2>&1; then
+  exec uv run --project "$root" python "$root/.githooks/check_pii.py"
+else
+  exec python3 "$root/.githooks/check_pii.py"
+fi

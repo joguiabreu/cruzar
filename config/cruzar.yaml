@@ -1,0 +1,3 @@
+# Cruzar app config. Base currency is hardcoded EUR for v1 (ADR-5).
+base_currency: EUR
+llm_model: qwen3:8b

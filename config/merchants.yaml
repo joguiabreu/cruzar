@@ -1,0 +1,10 @@
+# Merchant catalogue + regex patterns (SPEC §Inputs). Seeded into the
+# `merchants` / `merchant_patterns` tables each run (ADR-3). Lower priority
+# wins; ties broken by insertion id (ADR-13). Patterns are matched
+# case-insensitively against transactions.description_raw.
+merchants:
+  - name: Spotify
+    category: Subscriptions
+    patterns:
+      - pattern: "Spotify"
+        priority: 100

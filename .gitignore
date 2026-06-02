@@ -13,3 +13,5 @@ __pycache__/
 *.sqlite3
 .env
 config/sources.yaml
+# real PII values the pre-commit guard scans for — must never be committed
+.pii-denylist
