@@ -41,19 +41,26 @@ product behavior, `docs/SPEC.md` wins; ask before deviating from either.
   an `llm` match; nothing overwrites `manual`.
 - Secrets only in the macOS Keychain via `keyring`. Never write tokens to disk,
   never commit them (ADR-9).
+- **Real values NEVER touch committable parts of the repo.** No real payees,
+  balances, amounts, account numbers, or names in code, configs, fixtures, docs,
+  README, comments, plans, commit messages, or logs — anything git can track.
+  Real data lives ONLY in gitignored `/data/` and `/reports/`. Use obviously-fake
+  placeholders everywhere else (the testing-conventions rules below are the
+  specific case of this general invariant). When in doubt, redact.
 - One parser module per institution in `/parsers/`, implementing
   `parse(pdf_path) -> ParsedStatement`, emitting lines in deterministic
   top-to-bottom order (ADR-11).
 
 ## Workflow
 
-- **Plan first** for any task with 3+ steps. Produce `plan.md`, then STOP. Do not
+- **Plan first** for any task with 3+ steps. Write the plan to
+  `docs/plans/plan_NNN_<slug>.md` (NEVER at the repo root), then STOP. Do not
   implement until I reply "address notes, implement."
 - Work in **vertical slices**. Each slice ends with its acceptance test passing.
 - "Done" means: the relevant AC test passes, `ruff` clean, `pyright` clean, full
   suite run. Reporting "done" with a failing/skipped AC is a failure.
 - **Don't widen scope.** If you spot a needed change outside the task, write it
-  in `plan.md` and ask — don't silently do it.
+  in the plan and ask — don't silently do it.
 - If a change would touch an **ADR or an AC, stop and ask.** ADRs are decisions,
   not suggestions.
 - Prefer editing existing files over adding new ones. No new top-level modules
@@ -96,7 +103,7 @@ product behavior, `docs/SPEC.md` wins; ask before deviating from either.
 ## Notes
 
 - `@docs/SPEC.md` is the full specification. `@docs/` holds any split-out design notes.
-- Plans: write the working plan to plan.md at the root for annotation; once I approve it, archive it to `docs/plans/plan_NNN_<slug>.md` and commit. Read existing plans there for prior-slice decisions before planning a new slice.
+- Plans: **always** live in `docs/plans/plan_NNN_<slug>.md` — never at the repo root. Write the plan there, annotate and approve it in place, then commit. Read existing plans there for prior-slice decisions before planning a new slice.
 - Keep this file under ~150 lines. When the agent makes the same mistake twice,
   the fix is a new rule here — not re-explaining in chat. (That habit is the
   whole point: engineer the harness so the mistake can't recur.)

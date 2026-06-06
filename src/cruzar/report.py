@@ -7,8 +7,11 @@ Investment Detail and Needs-Categorization sections are later slices.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 _CASH_TYPES = ("checking", "savings")
 
@@ -65,7 +68,9 @@ def _render_month(rows: list[sqlite3.Row], year_month: str) -> str:
 
 def write_reports(conn: sqlite3.Connection, reports_dir: Path) -> None:
     reports_dir.mkdir(parents=True, exist_ok=True)
-    for year_month in _months_with_spending(conn):
+    months = _months_with_spending(conn)
+    for year_month in months:
         rows = _spending_rows(conn, year_month)
         content = _render_month(rows, year_month)
         (reports_dir / f"cruzar-{year_month}.md").write_text(content, encoding="utf-8")
+    logger.info("wrote %d report(s) to %s", len(months), reports_dir)
