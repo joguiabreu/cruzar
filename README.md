@@ -139,8 +139,8 @@ Adding a new account is a **YAML edit only** (SPEC AC7) — no code change —
 *unless* the institution's PDF format needs a new parser module (see below).
 
 > The `institution` value must match a parser module in
-> `src/cruzar/parsers/`. The repo ships with two parsers today (`activobank`,
-> `moey`); if your bank isn't covered, add one (next section).
+> `src/cruzar/parsers/`. The repo ships with three parsers today (`activobank`,
+> `moey`, `revolut`); if your bank isn't covered, add one (next section).
 
 ## Configuration
 

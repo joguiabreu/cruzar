@@ -14,3 +14,9 @@ accounts:
     source_type: manual
     account_type: checking         # CONTA MOEY = à ordem (demand deposit)
     currency: EUR
+  - institution: revolut
+    name: Conta Revolut
+    account_match: revolut         # files in data/inbox/revolut/
+    source_type: manual
+    account_type: checking         # E-Money / Conta Corrente = demand deposit
+    currency: EUR

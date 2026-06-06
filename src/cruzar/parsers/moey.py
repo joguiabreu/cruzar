@@ -25,7 +25,7 @@ from typing import Any
 import pdfplumber
 
 from cruzar.models import ParsedStatement, ParsedTransaction
-from cruzar.parsers._common import cluster_rows, row_text
+from cruzar.parsers._common import cluster_rows, parse_pt_month_date, row_text
 
 # A transaction date token: DD-MM-YYYY (DATA LANÇAMENTO / DATA VALOR).
 _DATE_RE = re.compile(r"^\d{2}-\d{2}-\d{4}$")
@@ -34,21 +34,6 @@ _DATE_RE = re.compile(r"^\d{2}-\d{2}-\d{4}$")
 # none), so reference digits are never mistaken for the amount.
 _AMOUNT_RE = re.compile(r"^\d{1,3}(?:\.\d{3})*,\d{2}$")
 _SIGN_TOKENS = {"+", "-"}
-
-_PT_MONTHS = {
-    "janeiro": 1,
-    "fevereiro": 2,
-    "março": 3,
-    "abril": 4,
-    "maio": 5,
-    "junho": 6,
-    "julho": 7,
-    "agosto": 8,
-    "setembro": 9,
-    "outubro": 10,
-    "novembro": 11,
-    "dezembro": 12,
-}
 
 # "... 4 de Maio de 2026 ... 29 de Maio de 2026" — first/last day-month-year.
 _PERIOD_RE = re.compile(
@@ -81,16 +66,12 @@ def _period(all_text: str) -> tuple[date, date]:
     match = _PERIOD_RE.search(all_text)
     if match is None:
         raise MoeyParseError("could not locate '<d> de <Month> de <year>' period")
-    start = _named_date(match.group(1), match.group(2), match.group(3))
-    end = _named_date(match.group(4), match.group(5), match.group(6))
+    try:
+        start = parse_pt_month_date(match.group(1), match.group(2), match.group(3))
+        end = parse_pt_month_date(match.group(4), match.group(5), match.group(6))
+    except ValueError as exc:
+        raise MoeyParseError(str(exc)) from exc
     return start, end
-
-
-def _named_date(day: str, month_name: str, year: str) -> date:
-    month = _PT_MONTHS.get(month_name.lower())
-    if month is None:
-        raise MoeyParseError(f"unknown Portuguese month: {month_name!r}")
-    return date(int(year), month, int(day))
 
 
 def parse(pdf_path: str | Path) -> ParsedStatement:

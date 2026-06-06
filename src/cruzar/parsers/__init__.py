@@ -10,11 +10,12 @@ from collections.abc import Callable
 from pathlib import Path
 
 from cruzar.models import ParsedStatement
-from cruzar.parsers import activobank, moey
+from cruzar.parsers import activobank, moey, revolut
 
 PARSERS: dict[str, Callable[[str | Path], ParsedStatement]] = {
     "activobank": activobank.parse,
     "moey": moey.parse,
+    "revolut": revolut.parse,
 }
 
 

@@ -70,6 +70,10 @@ product behavior, `docs/SPEC.md` wins; ask before deviating from either.
   Once decisions are settled, **delete the `.html` and write the final
   `docs/plans/plan_NNN_<slug>.md`** from it (the committed plan of record). Write
   the plan, then STOP — do not implement until I reply "address notes, implement."
+- **Never list a fixture/oracle sign-off as a plan decision.** It is already
+  mandated (see Testing conventions) — not a choice. Don't put it in a plan's
+  decisions; just propose the obviously-fake table inline at implementation time
+  for verification. Anything CLAUDE.md already mandates is not a "decision."
 - Work in **vertical slices**. Each slice ends with its acceptance test passing.
 - "Done" means: the relevant AC test passes, `ruff` clean, `pyright` clean, full
   suite run. Reporting "done" with a failing/skipped AC is a failure.

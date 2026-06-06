@@ -1,0 +1,38 @@
+{
+  "currency": "EUR",
+  "period_start": "2020-01-05",
+  "period_end": "2025-06-25",
+  "closing_balance": "2535.00",
+  "transactions": [
+    {
+      "intra_statement_seq": 1,
+      "date": "2020-01-05",
+      "amount": "100.00",
+      "description_raw": "Carregamento com cart\u00e3o *1000 De: *1000"
+    },
+    {
+      "intra_statement_seq": 2,
+      "date": "2020-01-10",
+      "amount": "-5.00",
+      "description_raw": "Comiss\u00e3o de entrega de cart\u00e3o Cart\u00e3o: 100000******1000"
+    },
+    {
+      "intra_statement_seq": 3,
+      "date": "2020-01-15",
+      "amount": "-50.00",
+      "description_raw": "Convers\u00e3o cambial para PLN 200.00 PLN"
+    },
+    {
+      "intra_statement_seq": 4,
+      "date": "2025-06-20",
+      "amount": "1500.00",
+      "description_raw": "Transfer\u00eancia de JOAO EXEMPLO DA SILVA Refer\u00eancia: From Joao E De: JOAO EXEMPLO DA SILVA"
+    },
+    {
+      "intra_statement_seq": 5,
+      "date": "2025-06-25",
+      "amount": "-10.00",
+      "description_raw": "Spotify Para: Spotify, Stockholm Cart\u00e3o: 100000******2000"
+    }
+  ]
+}
