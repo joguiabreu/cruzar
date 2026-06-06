@@ -4,10 +4,19 @@
 # KEEP PATTERNS SPECIFIC: never a bare "TRANSFER"/"TRANSFEREN". A broad rule would
 # swallow "TRANSFERENCIA - VENCIMENTO" (salary/income) and wrongly drop it from
 # Earned (AC19). The salary carve-out is enforced purely by pattern specificity.
+#
+# Patterns match OUTBOUND or own-funding flows only. Inbound descriptions are
+# never patterned: Revolut "Transferência de …" and Moey "IPS/…" carry real
+# third-party income, so a rule would wrongly drop it from Earned (AC19). Their
+# own-account legs are caught by step-2 pairing instead.
 transfer_patterns:
-  - "TRF P/"            # ActivoBank: outbound transfer
-  - "TRF MB WAY"        # ActivoBank: MB WAY payment to a person (transfer for now)
-  - "Trf imediata"      # Moey: instant transfer to a person
-  - "TRANSF SEPA"       # Moey: SEPA transfer (own-account inbound leg, etc.)
+  - "TRF P/"                 # ActivoBank: outbound transfer
+  - "TRF MB WAY"             # ActivoBank: MB WAY payment to a person (transfer for now)
+  - "Trf imediata"           # Moey: instant transfer to a person
+  - "TRANSF SEPA"            # Moey: SEPA transfer (own-account inbound leg, etc.)
+  - "Transferência para"     # Revolut: outbound transfer to a person ("para" → outbound only)
+  - "P2P Personal Payments"  # Revolut: outbound peer payment
+  - "Carregamento com"       # Revolut: top-up (cartão / Google Pay) — funding from your own money
+  - "Conversão cambial"      # Revolut: internal currency exchange between your own wallets
 
 # investment_flow_patterns: []   # ADR-14 / Portfolio Δ slice — not consumed yet

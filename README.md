@@ -178,10 +178,19 @@ Detail. Detection (ADR-15) is two steps:
 
 ```yaml
 transfer_patterns:
-  - "TRF P/"            # outbound transfer
-  - "Trf imediata"      # instant transfer to a person
-  - "TRANSF SEPA"       # SEPA transfer
+  - "TRF P/"                 # outbound transfer
+  - "Trf imediata"           # instant transfer to a person
+  - "TRANSF SEPA"            # SEPA transfer
+  - "Transferência para"     # Revolut: outbound transfer to a person
+  - "P2P Personal Payments"  # Revolut: peer payment
+  - "Carregamento com"       # Revolut: top-up (card / Google Pay) — own funding
+  - "Conversão cambial"      # Revolut: internal currency exchange
 ```
+
+> Patterns match **outbound or own-funding** flows only. **Inbound** descriptions
+> are never patterned — Revolut `Transferência de …` and Moey `IPS/…` carry real
+> third-party income, so a rule would wrongly drop it from income. Their
+> own-account legs are caught by step-2 pairing instead.
 
 > Keep patterns **specific** — never a bare `TRANSFER`. A broad rule would also
 > match an income line like `TRANSFERENCIA - VENCIMENTO` (salary) and wrongly
