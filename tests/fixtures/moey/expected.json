@@ -1,0 +1,44 @@
+{
+  "currency": "EUR",
+  "period_start": "2026-05-04",
+  "period_end": "2026-05-29",
+  "closing_balance": "5840.00",
+  "transactions": [
+    {
+      "intra_statement_seq": 1,
+      "date": "2026-05-05",
+      "amount": "-100.00",
+      "description_raw": "Trf imediata JOAO E SOUSA"
+    },
+    {
+      "intra_statement_seq": 2,
+      "date": "2026-05-07",
+      "amount": "-200.00",
+      "description_raw": "COMPRA CONTINENTE 2000002"
+    },
+    {
+      "intra_statement_seq": 3,
+      "date": "2026-05-10",
+      "amount": "1500.00",
+      "description_raw": "TRANSF SEPA -SELF EXEMPLO 3000003"
+    },
+    {
+      "intra_statement_seq": 4,
+      "date": "2026-05-15",
+      "amount": "-10.00",
+      "description_raw": "COMPRA Spotify 4000004 Stockholm SE"
+    },
+    {
+      "intra_statement_seq": 5,
+      "date": "2026-05-20",
+      "amount": "-50.00",
+      "description_raw": "TRF P/ ALICE EXEMPLO 5000005"
+    },
+    {
+      "intra_statement_seq": 6,
+      "date": "2026-05-25",
+      "amount": "-300.00",
+      "description_raw": "COMPRA RESTAURANTE 6000006"
+    }
+  ]
+}

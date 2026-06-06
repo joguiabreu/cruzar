@@ -18,6 +18,7 @@ from typing import Any
 import pdfplumber
 
 from cruzar.models import ParsedStatement, ParsedTransaction
+from cruzar.parsers._common import cluster_rows, row_text
 
 # Column boundaries by token-center x (derived from the header positions
 # DEBITO~370, CREDITO~445, SALDO~542). Description/amount split at x0 >= 340.
@@ -25,7 +26,6 @@ _AMOUNT_X0_MIN = 340.0
 _DEBIT_CREDIT_BOUND = 407.0  # center < this and amount => DEBITO
 _CREDIT_SALDO_BOUND = 493.0  # center < this => CREDITO, else SALDO
 _DATE_X0_MAX = 110.0  # the two date columns sit left of this
-_ROW_TOLERANCE = 3.0  # vertical clustering tolerance (points)
 
 _PERIOD_RE = re.compile(r"EXTRATO DE (\d{4}/\d{2}/\d{2}) A (\d{4}/\d{2}/\d{2})")
 
@@ -41,23 +41,6 @@ def _to_decimal(tokens: list[str]) -> Decimal:
         return Decimal(joined)
     except InvalidOperation as exc:  # pragma: no cover - defensive
         raise ActivoBankParseError(f"unparseable amount: {tokens!r}") from exc
-
-
-def _cluster_rows(words: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
-    """Group words into rows by their top coordinate, sorted top-to-bottom."""
-    rows: list[list[dict[str, Any]]] = []
-    for word in sorted(words, key=lambda w: (w["top"], w["x0"])):
-        if rows and abs(word["top"] - rows[-1][0]["top"]) <= _ROW_TOLERANCE:
-            rows[-1].append(word)
-        else:
-            rows.append([word])
-    for row in rows:
-        row.sort(key=lambda w: w["x0"])
-    return rows
-
-
-def _row_text(row: list[dict[str, Any]]) -> str:
-    return " ".join(w["text"] for w in row)
 
 
 def _infer_year(month: int, period_start: date, period_end: date) -> int:
@@ -85,14 +68,14 @@ def parse(pdf_path: str | Path) -> ParsedStatement:
             words = page.extract_words()
             text = " ".join(w["text"] for w in words)
             if "INICIAL" in text and "FINAL" in text:
-                rows = _cluster_rows(words)
+                rows = cluster_rows(words)
                 break
         if rows is None:
             raise ActivoBankParseError("could not find transaction table page")
 
     start_idx = end_idx = None
     for i, row in enumerate(rows):
-        text = _row_text(row)
+        text = row_text(row)
         if start_idx is None and "SALDO INICIAL" in text:
             start_idx = i
         elif "SALDO FINAL" in text:

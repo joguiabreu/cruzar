@@ -8,3 +8,9 @@ accounts:
     source_type: manual
     account_type: checking
     currency: EUR
+  - institution: moey
+    name: Conta Moey
+    account_match: moey            # files in data/inbox/moey/
+    source_type: manual
+    account_type: checking         # CONTA MOEY = à ordem (demand deposit)
+    currency: EUR
