@@ -59,6 +59,9 @@ product behavior, `docs/SPEC.md` wins; ask before deviating from either.
 - Work in **vertical slices**. Each slice ends with its acceptance test passing.
 - "Done" means: the relevant AC test passes, `ruff` clean, `pyright` clean, full
   suite run. Reporting "done" with a failing/skipped AC is a failure.
+- **Update `README.md` as part of every plan implementation.** A slice isn't done
+  until `README.md` reflects any new/changed command, config file, or
+  user-visible behavior it introduced. Treat a stale README like a failing test.
 - **Don't widen scope.** If you spot a needed change outside the task, write it
   in the plan and ask — don't silently do it.
 - If a change would touch an **ADR or an AC, stop and ask.** ADRs are decisions,

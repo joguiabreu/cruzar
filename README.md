@@ -67,8 +67,10 @@ Runs the full manual-ingest pipeline. It:
    [Account setup](#account-setup)).
 4. Deduplicates by file hash, statement period, and transaction content hash —
    so re-running over unchanged files is a no-op and makes **zero LLM calls**.
-5. Parses, persists, categorizes, and writes one Markdown report per month to
-   `reports/`.
+5. Parses and persists each statement.
+6. **Flags transfers** (`is_transfer`) so inter-account moves don't count as
+   spending — see [Transfers](#transfers).
+7. Categorizes merchants, and writes one Markdown report per month to `reports/`.
 
 ```bash
 uv run cruzar process
@@ -103,8 +105,9 @@ generated Markdown (placeholder data shown):
 | --- | --- | --- | --- | --- |
 | 2026-05-27 | -10.00 | EUR | Streaming Co | Subscriptions |
 | 2026-05-20 | -42.50 | EUR | Corner Grocer | Groceries |
-| 2026-05-12 | -100.00 | EUR | Transfer to Savings |  |
 ```
+
+(Transfers between your own accounts are excluded — see [Transfers](#transfers).)
 
 ## Account setup
 
@@ -151,6 +154,7 @@ the source of truth at runtime; the YAML files are editable inputs (ADR-3).
 | `cruzar.yaml`          | App config: `base_currency` (EUR), `llm_model` (Ollama). |
 | `categories.yaml`      | Controlled category vocabulary.                          |
 | `merchants.yaml`       | Merchant names + match patterns for categorization.      |
+| `flows.yaml`           | `transfer_patterns` for transfer detection (see below).  |
 
 `config/cruzar.yaml`:
 
@@ -158,6 +162,34 @@ the source of truth at runtime; the YAML files are editable inputs (ADR-3).
 base_currency: EUR
 llm_model: qwen3:8b
 ```
+
+## Transfers
+
+Money moving between your own accounts (or paid to someone) isn't spending, so
+Cruzar flags those transactions `is_transfer` and excludes them from Spending
+Detail. Detection (ADR-15) is two steps:
+
+1. **Description rules** — any transaction whose description matches a
+   `transfer_pattern` in `config/flows.yaml`.
+2. **Account-pair matching** — an opposite-signed transaction of equal amount on
+   another tracked account, same currency, within ±3 days, marks both legs.
+
+`config/flows.yaml` (placeholder values):
+
+```yaml
+transfer_patterns:
+  - "TRF P/"            # outbound transfer
+  - "Trf imediata"      # instant transfer to a person
+  - "TRANSF SEPA"       # SEPA transfer
+```
+
+> Keep patterns **specific** — never a bare `TRANSFER`. A broad rule would also
+> match an income line like `TRANSFERENCIA - VENCIMENTO` (salary) and wrongly
+> drop it from income. Patterns are committed, so they must never contain a real
+> counterparty name.
+
+Detection is recomputed every run from the current patterns, so editing
+`flows.yaml` re-evaluates all transactions on the next `cruzar process`.
 
 ## Adding a parser for a new institution
 

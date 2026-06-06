@@ -1,0 +1,13 @@
+# Flow rules (SPEC §Inputs). transfer_patterns drive is_transfer step 1 (ADR-15);
+# they are matched case-insensitively against transactions.description_raw.
+#
+# KEEP PATTERNS SPECIFIC: never a bare "TRANSFER"/"TRANSFEREN". A broad rule would
+# swallow "TRANSFERENCIA - VENCIMENTO" (salary/income) and wrongly drop it from
+# Earned (AC19). The salary carve-out is enforced purely by pattern specificity.
+transfer_patterns:
+  - "TRF P/"            # ActivoBank: outbound transfer
+  - "TRF MB WAY"        # ActivoBank: MB WAY payment to a person (transfer for now)
+  - "Trf imediata"      # Moey: instant transfer to a person
+  - "TRANSF SEPA"       # Moey: SEPA transfer (own-account inbound leg, etc.)
+
+# investment_flow_patterns: []   # ADR-14 / Portfolio Δ slice — not consumed yet

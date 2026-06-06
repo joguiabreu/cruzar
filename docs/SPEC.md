@@ -372,6 +372,7 @@ These are decided, not open — recorded so they stay visible.
 
 - Cross-statement identical same-day transactions (same amount + description) can collide under content_hash and the second is dropped. Mitigated by deterministic line ordering within a statement; not eliminated across statements.
 - Transfers not caught by description rules or ±3-day pair-matching leak into Earned/Spent.
+- Transfer pair-matching (ADR-15 step 2) requires both legs in the same currency; a cross-currency transfer pair is not matched (consistent with single-base EUR).
 - Flow columns (Earned/Spent/Portfolio Δ) converted at a single period-end rate are an approximation of the true day-by-day converted value; error is unsigned. The base rollup also folds FX drift into cost basis.
 - In-account dividends/interest on investment accounts are reported as portfolio return (via IV), not as Earned.
 - Portfolio Δ degrades to gross (flagged) for any account-month whose statement does not itemize external contributions.

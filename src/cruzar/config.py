@@ -40,9 +40,12 @@ class Config:
     accounts: list[AccountConfig]
     categories: list[str]
     merchants: list[MerchantConfig]
+    transfer_patterns: list[str]  # is_transfer step 1 (ADR-15), from flows.yaml
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}  # optional config (e.g. flows.yaml) — absent means "no rules"
     with path.open(encoding="utf-8") as fh:
         data = yaml.safe_load(fh)
     return data or {}
@@ -54,6 +57,7 @@ def load_config(config_dir: str | Path) -> Config:
     sources = _load_yaml(config_dir / "sources.yaml")
     categories_doc = _load_yaml(config_dir / "categories.yaml")
     merchants_doc = _load_yaml(config_dir / "merchants.yaml")
+    flows_doc = _load_yaml(config_dir / "flows.yaml")
 
     accounts = [AccountConfig(**entry) for entry in sources.get("accounts", [])]
     merchants = [
@@ -69,4 +73,5 @@ def load_config(config_dir: str | Path) -> Config:
         accounts=accounts,
         categories=list(categories_doc.get("categories", [])),
         merchants=merchants,
+        transfer_patterns=list(flows_doc.get("transfer_patterns", [])),
     )

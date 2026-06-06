@@ -14,7 +14,7 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
-from cruzar import categorize, report
+from cruzar import categorize, report, transfers
 from cruzar.config import load_config
 from cruzar.db import connect, init_schema
 from cruzar.parsers import get_parser
@@ -68,6 +68,7 @@ def process(
         init_schema(conn)
         seed_config(conn, config)
         _ingest_inbox(conn, Path(inbox_dir))
+        transfers.detect(conn, config.transfer_patterns)  # normalize (ADR-15)
         categorize.categorize(conn)
         report.write_reports(conn, Path(reports_dir))
     finally:
