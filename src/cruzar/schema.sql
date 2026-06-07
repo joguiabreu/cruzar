@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS holdings_snapshot (
     symbol        TEXT NOT NULL,
     snapshot_date TEXT NOT NULL,        -- = statement.period_end
     quantity      TEXT NOT NULL,
-    cost_basis    TEXT NOT NULL,        -- broker-reported aggregate, native currency
+    cost_basis    TEXT,                 -- broker-reported aggregate, native currency; NULL if the broker doesn't report it
     value         TEXT NOT NULL,        -- market value at snapshot_date, native currency
     currency      TEXT NOT NULL,        -- holding's native currency; convert to base at report time (ADR-5)
     PRIMARY KEY (account_id, symbol, snapshot_date)  -- IMMUTABLE: INSERT only

@@ -153,13 +153,17 @@ def persist_statement(
     # cost_basis/value are stored in each holding's OWN native currency.
     snapshot_date = statement.period_end.isoformat()
     for h in statement.holdings:
+        cost_basis = (
+            canonical_amount(h.cost_basis, h.currency)
+            if h.cost_basis is not None
+            else None  # broker did not report a cost basis (e.g. Degiro)
+        )
         conn.execute(
             "INSERT INTO holdings_snapshot(account_id, statement_id, symbol, "
             "snapshot_date, quantity, cost_basis, value, currency) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(account_id, symbol, snapshot_date) DO NOTHING",
             (account_id, statement_id, h.symbol, snapshot_date, str(h.quantity),
-             canonical_amount(h.cost_basis, h.currency),
-             canonical_amount(h.value, h.currency), h.currency),
+             cost_basis, canonical_amount(h.value, h.currency), h.currency),
         )
     return statement_id

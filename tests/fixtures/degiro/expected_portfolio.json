@@ -1,0 +1,16 @@
+{
+  "currency": "EUR",
+  "period_start": "2026-05-31",
+  "period_end": "2026-05-31",
+  "closing_balance": "100.00",
+  "transactions": [],
+  "holdings": [
+    {
+      "symbol": "IE00TESTFAKE",
+      "quantity": "30",
+      "cost_basis": null,
+      "value": "1500.00",
+      "currency": "EUR"
+    }
+  ]
+}

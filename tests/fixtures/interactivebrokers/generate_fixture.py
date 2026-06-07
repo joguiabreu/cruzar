@@ -1,7 +1,7 @@
 """Generate the synthetic Interactive Brokers fixture (statement.pdf + expected.json).
 
 Entirely MADE UP — no real tickers, quantities, or amounts. It mimics an IBKR
-Activity Statement closely enough that ``parsers.interactivebroker.parse`` extracts
+Activity Statement closely enough that ``parsers.interactivebrokers.parse`` extracts
 it identically: a period line, ``Base Currency EUR``, a Cash Report with a
 ``Base Currency Summary → Ending Cash`` row, an **Open Positions** table with both
 an EUR and a USD holding (exercising the per-holding currency column), per-currency
@@ -11,7 +11,7 @@ an EUR and a USD holding (exercising the per-holding currency column), per-curre
 Holdings carry their OWN currency; the EUR one and USD one prove the parser tracks
 the currency sub-header. One value is thousands-separated to exercise number parsing.
 
-Regenerate with:  uv run python tests/fixtures/interactivebroker/generate_fixture.py
+Regenerate with:  uv run python tests/fixtures/interactivebrokers/generate_fixture.py
 """
 
 from __future__ import annotations

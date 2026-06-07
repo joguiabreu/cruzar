@@ -20,8 +20,13 @@ from cruzar.db import connect, init_schema
 _BASELINE_SQL = (Path(__file__).parent / "schema_baseline.sql").read_text(encoding="utf-8")
 
 
-def _schema(conn: sqlite3.Connection) -> dict[str, set[str]]:
-    """Map each user table to its set of column names."""
+def _schema(conn: sqlite3.Connection) -> dict[str, dict[str, tuple[str, int, int]]]:
+    """Map each user table to {column: (type, notnull, pk)}.
+
+    Includes the NOT NULL flag so a migration that must drop/add NOT NULL (not just
+    add a column) is also verified. The default value is intentionally excluded —
+    an additive ALTER ... DEFAULT legitimately differs from the fresh DDL.
+    """
     tables = [
         row[0]
         for row in conn.execute(
@@ -30,7 +35,11 @@ def _schema(conn: sqlite3.Connection) -> dict[str, set[str]]:
         )
     ]
     return {
-        t: {row[1] for row in conn.execute(f"PRAGMA table_info({t})")} for t in tables
+        t: {
+            row[1]: (row[2].upper(), row[3], row[5])  # name: (type, notnull, pk)
+            for row in conn.execute(f"PRAGMA table_info({t})")
+        }
+        for t in tables
     }
 
 

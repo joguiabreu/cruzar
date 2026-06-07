@@ -78,13 +78,13 @@ So granular cash-flow transactions are not available from IBKR PDFs (see D3).
 src/cruzar/models.py                                   # +ParsedHolding, +holdings field (D2)
 src/cruzar/schema.sql                                  # +currency on holdings_snapshot (D1)
 src/cruzar/persist.py                                  # persist holdings_snapshot (INSERT-only, ADR-6)
-src/cruzar/parsers/interactivebroker.py                # NEW — parse() (ADR-11): holdings + cash
-src/cruzar/parsers/__init__.py                         # register "interactivebroker"
-config/sources.yaml + .example                         # add interactivebroker account (brokerage, EUR)
-tests/fixtures/interactivebroker/generate_fixture.py   # NEW — synthetic IBKR-shaped PDF + expected.json
-tests/fixtures/interactivebroker/statement.pdf         # NEW
-tests/fixtures/interactivebroker/expected.json         # NEW (verified at impl time)
-tests/acceptance/test_ac08_interactivebroker_parser.py # NEW — AC8 parser fixture (incl. holdings)
+src/cruzar/parsers/interactivebrokers.py                # NEW — parse() (ADR-11): holdings + cash
+src/cruzar/parsers/__init__.py                         # register "interactivebrokers"
+config/sources.yaml + .example                         # add interactivebrokers account (brokerage, EUR)
+tests/fixtures/interactivebrokers/generate_fixture.py   # NEW — synthetic IBKR-shaped PDF + expected.json
+tests/fixtures/interactivebrokers/statement.pdf         # NEW
+tests/fixtures/interactivebrokers/expected.json         # NEW (verified at impl time)
+tests/acceptance/test_ac08_interactivebrokers_parser.py # NEW — AC8 parser fixture (incl. holdings)
 tests/acceptance/test_ac01_holdings_idempotent.py      # NEW — reprocess adds no duplicate snapshot (AC1/ADR-6)
 docs/SPEC.md                                           # add currency to holdings_snapshot model (D1)
 README.md                                              # five parsers; first with holdings; Net Worth report pending
@@ -93,9 +93,9 @@ README.md                                              # five parsers; first wit
 ### sources.yaml entry
 
 ```yaml
-  - institution: interactivebroker
+  - institution: interactivebrokers
     name: Conta Interactive Brokers
-    account_match: interactivebroker   # files in data/inbox/interactivebroker/
+    account_match: interactivebrokers   # files in data/inbox/interactivebrokers/
     source_type: manual
     account_type: brokerage
     currency: EUR                      # base currency; holdings carry their own currency (D1)
@@ -103,7 +103,7 @@ README.md                                              # five parsers; first wit
 
 ## Test plan (slice gate)
 
-- `test_ac08_interactivebroker_parser.py` — parse(synthetic fixture) ==
+- `test_ac08_interactivebrokers_parser.py` — parse(synthetic fixture) ==
   `expected.json`, including the `holdings` list (obviously-fake tickers/values, a
   USD sub-header, a skipped Total line) and cash `closing_balance`.
 - `test_ac01_holdings_idempotent.py` — persist twice; exactly one

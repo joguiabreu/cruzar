@@ -31,7 +31,7 @@ class ParsedHolding:
 
     symbol: str
     quantity: Decimal
-    cost_basis: Decimal  # broker-reported aggregate, native currency
+    cost_basis: Decimal | None  # broker-reported aggregate, native currency; None if not reported
     value: Decimal  # market value at snapshot_date, native currency
     currency: str  # holding's native currency (ISO 4217)
 

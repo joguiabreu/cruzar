@@ -1,0 +1,27 @@
+{
+  "currency": "EUR",
+  "period_start": "2026-05-02",
+  "period_end": "2026-05-05",
+  "closing_balance": "100.50",
+  "transactions": [
+    {
+      "intra_statement_seq": 1,
+      "date": "2026-05-05",
+      "amount": "0.50",
+      "description_raw": "Flatex Interest Income"
+    },
+    {
+      "intra_statement_seq": 2,
+      "date": "2026-05-04",
+      "amount": "1000.00",
+      "description_raw": "flatex Deposit"
+    },
+    {
+      "intra_statement_seq": 3,
+      "date": "2026-05-02",
+      "amount": "-500.00",
+      "description_raw": "VANGUARD FTSE ALL-WORLD UCITS ETF IE00TESTFAKE Compra Acc 50,00 EUR (IE00TESTFAKE)"
+    }
+  ],
+  "holdings": []
+}

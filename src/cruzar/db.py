@@ -44,6 +44,44 @@ def _migrate(conn: sqlite3.Connection) -> None:
         # that always supplies currency, so the default never reaches real rows.
         "TEXT NOT NULL DEFAULT 'EUR'",
     )
+    _make_cost_basis_nullable(conn)
+
+
+def _make_cost_basis_nullable(conn: sqlite3.Connection) -> None:
+    """Drop NOT NULL on holdings_snapshot.cost_basis (some brokers don't report it).
+
+    SQLite has no ALTER COLUMN, so this rebuilds the table. Runs only when the
+    column is still NOT NULL, so it's idempotent. Must run AFTER the currency
+    migration so the copied column list matches the rebuilt table.
+    """
+    info = list(conn.execute("PRAGMA table_info(holdings_snapshot)"))
+    cost_basis = next((c for c in info if c[1] == "cost_basis"), None)
+    if cost_basis is None or cost_basis[3] == 0:  # c[3] == notnull flag
+        return
+    conn.executescript(
+        """
+        PRAGMA foreign_keys=OFF;
+        CREATE TABLE holdings_snapshot__new (
+            account_id    INTEGER NOT NULL REFERENCES accounts(id),
+            statement_id  INTEGER NOT NULL REFERENCES statements(id),
+            symbol        TEXT NOT NULL,
+            snapshot_date TEXT NOT NULL,
+            quantity      TEXT NOT NULL,
+            cost_basis    TEXT,
+            value         TEXT NOT NULL,
+            currency      TEXT NOT NULL,
+            PRIMARY KEY (account_id, symbol, snapshot_date)
+        );
+        INSERT INTO holdings_snapshot__new
+            SELECT account_id, statement_id, symbol, snapshot_date,
+                   quantity, cost_basis, value, currency
+            FROM holdings_snapshot;
+        DROP TABLE holdings_snapshot;
+        ALTER TABLE holdings_snapshot__new RENAME TO holdings_snapshot;
+        PRAGMA foreign_keys=ON;
+        """
+    )
+    logger.info("schema migration: holdings_snapshot.cost_basis is now nullable")
 
 
 def _add_column_if_missing(

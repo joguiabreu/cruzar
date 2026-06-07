@@ -11,9 +11,9 @@ import json
 from pathlib import Path
 
 from cruzar.models import ParsedStatement
-from cruzar.parsers.interactivebroker import parse
+from cruzar.parsers.interactivebrokers import parse
 
-FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "interactivebroker"
+FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "interactivebrokers"
 
 
 def _serialize(statement: ParsedStatement) -> dict[str, object]:
@@ -44,13 +44,13 @@ def _serialize(statement: ParsedStatement) -> dict[str, object]:
     }
 
 
-def test_ac08_interactivebroker_parser_has_fixture() -> None:
+def test_ac08_interactivebrokers_parser_has_fixture() -> None:
     expected = json.loads((FIXTURE_DIR / "expected.json").read_text(encoding="utf-8"))
     statement = parse(FIXTURE_DIR / "statement.pdf")
     assert _serialize(statement) == expected
 
 
-def test_ac08_interactivebroker_holdings_currencies() -> None:
+def test_ac08_interactivebrokers_holdings_currencies() -> None:
     # Two positions, distinct native currencies; subtotal/"Total in EUR" rows excluded.
     statement = parse(FIXTURE_DIR / "statement.pdf")
     by_symbol = {h.symbol: h for h in statement.holdings}
