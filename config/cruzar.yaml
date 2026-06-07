@@ -1,3 +1,11 @@
 # Cruzar app config. Base currency is hardcoded EUR for v1 (ADR-5).
 base_currency: EUR
 llm_model: qwen3:8b
+
+# FX rates (ADR-5). A report's month-end rate is fetched once and persisted, then
+# reused (reproducible). This is the only external network call Cruzar makes — it
+# sends just a currency pair + date, never financial data.
+fx:
+  offline: false          # true → never fetch; use only cached/manual rates
+  timeout_seconds: 10
+  # access_key:           # optional exchangerate.host key; without it, ECB is used

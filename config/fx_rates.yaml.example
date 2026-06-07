@@ -1,0 +1,8 @@
+# OPTIONAL manual FX rates (ADR-5). Copy to config/fx_rates.yaml to supply rates by
+# hand (e.g. fully offline, or to pin a specific month-end rate). Base is EUR; each
+# `rate` is units of the quote currency per 1 EUR. A manually-seeded rate is treated
+# like a cached rate — it is never re-fetched. Leave the file absent to fetch on demand.
+rates:
+  - date: 2026-05-31      # a report month-end
+    quote: USD
+    rate: "1.0856"        # 1 EUR = 1.0856 USD

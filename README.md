@@ -158,17 +158,34 @@ the source of truth at runtime; the YAML files are editable inputs (ADR-3).
 | ---------------------- | -------------------------------------------------------- |
 | `sources.yaml`         | Account allowlist (gitignored — your real accounts).     |
 | `sources.yaml.example` | Template to copy from.                                   |
-| `cruzar.yaml`          | App config: `base_currency` (EUR), `llm_model` (Ollama). |
+| `cruzar.yaml`          | App config: `base_currency` (EUR), `llm_model` (Ollama), `fx`. |
 | `categories.yaml`      | Controlled category vocabulary.                          |
 | `merchants.yaml`       | Merchant names + match patterns for categorization.      |
 | `flows.yaml`           | `transfer_patterns` for transfer detection (see below).  |
+| `fx_rates.yaml`        | *Optional* hand-supplied FX rates (see FX rates below).  |
 
 `config/cruzar.yaml`:
 
 ```yaml
 base_currency: EUR
 llm_model: qwen3:8b
+fx:
+  offline: false        # true → never fetch; use only cached/manual rates
+  timeout_seconds: 10
 ```
+
+## FX rates
+
+Foreign-currency holdings (e.g. a USD stock in an EUR account) are converted to the
+base currency at the **period-end rate** (ADR-5). A month-end rate is **fetched once
+and persisted**, then reused — so regenerating a past month is reproducible.
+
+This is the **only external network call** Cruzar makes. It sends just a currency
+pair and a date — **never any financial data** — and after the first fetch the rate
+lives in your local SQLite. Source: exchangerate.host (if you set `fx.access_key`),
+else the keyless ECB reference rates. If the provider is unreachable, the most
+recent cached rate is used and flagged. To stay fully offline, set `fx.offline: true`
+and/or supply rates by hand in `config/fx_rates.yaml` (copy from `.example`).
 
 ## Transfers
 

@@ -107,6 +107,15 @@ def seed_config(conn: sqlite3.Connection, config: Config) -> None:
                 _now(),
             ),
         )
+    # Optional hand-supplied FX rates (ADR-5). Persisted like a cached rate; a
+    # present row is never re-fetched. INSERT-only so a fetched/edited rate wins.
+    for rate in config.fx_rates:
+        conn.execute(
+            "INSERT INTO fx_rates(date, base_currency, quote_currency, rate) "
+            "VALUES (?, 'EUR', ?, ?) "
+            "ON CONFLICT(date, base_currency, quote_currency) DO NOTHING",
+            (rate.date, rate.quote, str(rate.rate)),
+        )
     conn.commit()
 
 
