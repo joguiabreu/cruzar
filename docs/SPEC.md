@@ -233,7 +233,9 @@ Columns: Raw Description | LLM-Proposed Merchant | LLM-Proposed Category
 - quantity
 - cost_basis (broker-reported AGGREGATE at period_end, native currency; not
   lot-level, not computed by Cruzar)
-- value
+- value (market value at snapshot_date, native currency)
+- currency (the holding's OWN native currency, e.g. USD for a US stock in an EUR
+  account; converted to base at the period-end rate at report time, ADR-5/16)
 - PK: (account_id, symbol, snapshot_date)
 - IMMUTABLE
 

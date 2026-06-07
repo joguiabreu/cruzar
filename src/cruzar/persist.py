@@ -148,4 +148,18 @@ def persist_statement(
             (statement_id, posting_date, amt, txn.description_raw,
              txn.intra_statement_seq, chash),
         )
+    # Holdings snapshots are immutable (ADR-6): INSERT only, deduped on the PK
+    # (account_id, symbol, snapshot_date) so reprocessing a statement adds nothing.
+    # cost_basis/value are stored in each holding's OWN native currency.
+    snapshot_date = statement.period_end.isoformat()
+    for h in statement.holdings:
+        conn.execute(
+            "INSERT INTO holdings_snapshot(account_id, statement_id, symbol, "
+            "snapshot_date, quantity, cost_basis, value, currency) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(account_id, symbol, snapshot_date) DO NOTHING",
+            (account_id, statement_id, h.symbol, snapshot_date, str(h.quantity),
+             canonical_amount(h.cost_basis, h.currency),
+             canonical_amount(h.value, h.currency), h.currency),
+        )
     return statement_id

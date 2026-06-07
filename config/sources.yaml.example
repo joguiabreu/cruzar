@@ -20,3 +20,9 @@ accounts:
     source_type: manual
     account_type: checking         # E-Money / Conta Corrente = demand deposit
     currency: EUR
+  - institution: interactivebroker
+    name: Conta Interactive Brokers
+    account_match: interactivebrokers  # files in data/inbox/interactivebrokers/
+    source_type: manual
+    account_type: brokerage            # holdings + uninvested cash
+    currency: EUR                      # base currency; holdings carry their own currency

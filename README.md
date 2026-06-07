@@ -139,8 +139,15 @@ Adding a new account is a **YAML edit only** (SPEC AC7) — no code change —
 *unless* the institution's PDF format needs a new parser module (see below).
 
 > The `institution` value must match a parser module in
-> `src/cruzar/parsers/`. The repo ships with three parsers today (`activobank`,
-> `moey`, `revolut`); if your bank isn't covered, add one (next section).
+> `src/cruzar/parsers/`. The repo ships with four parsers today (`activobank`,
+> `moey`, `revolut`, and `interactivebroker` — the first investment account); if
+> your bank isn't covered, add one (next section).
+
+> **Investment accounts** (`account_type: brokerage`/`retirement`) capture an
+> immutable `holdings_snapshot` from the statement's positions (each holding in its
+> own native currency) plus the uninvested cash balance. The Net Worth / Portfolio Δ
+> **report** that consumes them is not built yet — this records the data; the
+> reporting lands in a later slice.
 
 ## Configuration
 

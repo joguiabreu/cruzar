@@ -7,7 +7,7 @@ account identity. Money is always ``Decimal`` (never ``float``).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 
@@ -21,9 +21,30 @@ class ParsedTransaction:
 
 
 @dataclass(frozen=True)
+class ParsedHolding:
+    """A broker-reported position at the statement's period_end (ADR-6).
+
+    cost_basis/value are broker-reported aggregates in the holding's OWN native
+    currency (e.g. a USD stock in an EUR account) — never computed or converted
+    here; conversion to base happens at report time (ADR-5).
+    """
+
+    symbol: str
+    quantity: Decimal
+    cost_basis: Decimal  # broker-reported aggregate, native currency
+    value: Decimal  # market value at snapshot_date, native currency
+    currency: str  # holding's native currency (ISO 4217)
+
+
+def _no_holdings() -> list[ParsedHolding]:
+    return []
+
+
+@dataclass(frozen=True)
 class ParsedStatement:
-    currency: str  # ISO 4217
+    currency: str  # ISO 4217 (the account/cash currency)
     period_start: date
     period_end: date
     closing_balance: Decimal  # native currency, signed
     transactions: list[ParsedTransaction]
+    holdings: list[ParsedHolding] = field(default_factory=_no_holdings)  # empty for cash parsers

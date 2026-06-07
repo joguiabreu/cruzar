@@ -1,0 +1,23 @@
+{
+  "currency": "EUR",
+  "period_start": "2026-05-01",
+  "period_end": "2026-05-31",
+  "closing_balance": "250.00",
+  "transactions": [],
+  "holdings": [
+    {
+      "symbol": "AAAA",
+      "quantity": "10",
+      "cost_basis": "500.00",
+      "value": "550.00",
+      "currency": "EUR"
+    },
+    {
+      "symbol": "BBBB",
+      "quantity": "4",
+      "cost_basis": "1200.00",
+      "value": "1500.00",
+      "currency": "USD"
+    }
+  ]
+}
