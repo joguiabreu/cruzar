@@ -143,7 +143,8 @@ period-end rate per ADR-5).
 - Section 1 (Summary): **base currency (EUR).**
 - Section 2 (Spending Detail): **native currency**, with a Currency column
   (raw transactions.amount; makes AC2 reconciliation exact).
-- Section 3 (Investment Detail): per-account subsections in **native
+- Section 3 (Earning Detail): **native currency**, with a Currency column.
+- Section 4 (Investment Detail): per-account subsections in **native
   currency**; Grand Total in **base currency**.
 
 Section 1: Summary
@@ -156,13 +157,19 @@ Columns: Date | Amount | Currency | Merchant | Category
 Transactions on cash accounts where amount < 0 AND is_transfer = false, this
 month only. Sorted by date descending.
 
-Section 3: Investment Detail (snapshot as of this month-end)
+Section 3: Earning Detail (this month)
+Columns: Date | Amount | Currency | Source
+Transactions on cash accounts where amount > 0 AND is_transfer = false, this
+month only (the itemised counterpart of the Summary's Earned). Source = matched
+merchant name, else raw description. Native currency. Sorted by date descending.
+
+Section 4: Investment Detail (snapshot as of this month-end)
 Per-account subsections:
 Columns: Symbol | Quantity | Cost Basis | Current Value | Δ Amount | Δ %
 Latest `holdings_snapshot` with `snapshot_date <= month-end`. Per-account
 totals row. Final "Grand Total" subsection in base currency.
 
-Section 4 (conditional): Needs Categorization
+Section 5 (conditional): Needs Categorization
 Shown iff un-categorized merchants exist.
 Columns: Raw Description | LLM-Proposed Merchant | LLM-Proposed Category
 

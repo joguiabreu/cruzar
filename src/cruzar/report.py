@@ -94,6 +94,36 @@ def _spending_section(conn: sqlite3.Connection, year_month: str) -> list[str]:
     return lines
 
 
+def _earning_section(conn: sqlite3.Connection, year_month: str) -> list[str]:
+    """Income counterpart of Spending Detail: cash-account inflows this month.
+    Same filter as metrics.earned, itemised — the rows sum to that month's Earned."""
+    rows = conn.execute(
+        "SELECT t.date AS date, t.amount AS amount, a.currency AS currency, "
+        "t.description_raw AS description_raw, m.name AS merchant_name "
+        "FROM transactions t "
+        "JOIN statements s ON t.statement_id = s.id "
+        "JOIN accounts a ON s.account_id = a.id "
+        "LEFT JOIN merchants m ON t.merchant_id = m.id "
+        f"WHERE a.account_type IN ({','.join('?' * len(_CASH_TYPES))}) "
+        "AND t.is_transfer = 0 "
+        "AND t.amount NOT LIKE '-%' AND t.amount != '0.00' "  # inflows only
+        "AND substr(t.date, 1, 7) = ? "
+        "ORDER BY t.date DESC, t.id DESC",
+        (*_CASH_TYPES, year_month),
+    ).fetchall()
+    lines = [
+        "## Earning Detail",
+        "",
+        "| Date | Amount | Currency | Source |",
+        "| --- | --- | --- | --- |",
+    ]
+    for row in rows:
+        source = row["merchant_name"] or row["description_raw"]
+        lines.append(f"| {row['date']} | {row['amount']} | {row['currency']} | {source} |")
+    lines.append("")
+    return lines
+
+
 def write_reports(
     conn: sqlite3.Connection, reports_dir: Path, *, fetch: Fetcher | None = None
 ) -> None:
@@ -103,6 +133,7 @@ def write_reports(
         lines = [f"# Cruzar — {year_month}", ""]
         lines += _summary_section(conn, year_month, months, fetch=fetch)
         lines += _spending_section(conn, year_month)
+        lines += _earning_section(conn, year_month)
         (reports_dir / f"cruzar-{year_month}.md").write_text(
             "\n".join(lines), encoding="utf-8"
         )

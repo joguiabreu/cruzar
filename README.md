@@ -112,14 +112,22 @@ generated Markdown (placeholder data shown):
 | --- | --- | --- | --- | --- |
 | 2026-05-27 | -10.00 | EUR | Streaming Co | Subscriptions |
 | 2026-05-20 | -42.50 | EUR | Corner Grocer | Groceries |
+
+## Earning Detail
+
+| Date | Amount | Currency | Source |
+| --- | --- | --- | --- |
+| 2026-05-22 | 2000.00 | EUR | Example Salary |
 ```
 
 **Summary** (Section 1) is in EUR: one row per month (last 12, newest first),
 computed as of each month-end. **Earned/Spent** are cash-account flows; **Net
 Worth** sums cash balances + holdings value across accounts, converting foreign
 holdings at the month-end rate (see [FX rates](#fx-rates)). Portfolio Δ and a
-per-position Investment Detail section are upcoming. The **Spending Detail** section
-is native-currency; transfers between your own accounts are excluded — see
+per-position Investment Detail section are upcoming. The **Spending Detail** and
+**Earning Detail** sections are native-currency and itemise that month's
+cash outflows and inflows respectively (Earning Detail's rows sum to the Summary's
+Earned); transfers between your own accounts are excluded — see
 [Transfers](#transfers).
 
 ## Account setup
