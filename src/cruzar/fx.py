@@ -25,6 +25,7 @@ import urllib.request
 from collections.abc import Callable
 from datetime import date, timedelta
 from decimal import Decimal
+from functools import partial
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -41,8 +42,15 @@ class FxError(Exception):
 # --- live provider (network seam — exercised in prod, not in the unit suite) ---
 
 def _http_json(url: str, timeout: float) -> Any:
-    with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310 - https provider
-        return json.loads(resp.read().decode("utf-8"), parse_float=Decimal)
+    # Send Accept: application/json — ECB's SDMX API otherwise returns XML, which
+    # would blow up json.loads. Any transport/decode/non-JSON failure becomes an
+    # FxError so the degradation ladder engages instead of crashing the pipeline.
+    request = urllib.request.Request(url, headers={"Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as resp:  # noqa: S310 - https provider
+            return json.loads(resp.read().decode("utf-8"), parse_float=Decimal)
+    except (OSError, ValueError) as exc:  # URLError/HTTPError, decode, JSONDecodeError
+        raise FxError(f"FX provider request failed ({type(exc).__name__})") from exc
 
 
 def _fetch_exchangerate_host(
@@ -85,6 +93,11 @@ def _fetch_ecb(on: date, quote: str, *, timeout: float) -> Decimal:
         if period_id <= on.isoformat() and isinstance(value, Decimal):
             return value
     raise FxError(f"ECB: no {quote} observation on/before {on}")
+
+
+def live_fetcher(*, access_key: str | None = None, timeout: float = _DEFAULT_TIMEOUT) -> Fetcher:
+    """Build a network Fetcher bound to provider settings (from cruzar.yaml)."""
+    return partial(_default_fetch, access_key=access_key, timeout=timeout)
 
 
 def _default_fetch(
@@ -155,7 +168,7 @@ def convert(
     fetch: Fetcher | None = _default_fetch,
 ) -> Decimal:
     """Convert ``amount`` in ``currency`` to EUR as of ``on`` (amount / rate)."""
-    rate, _stale = get_rate(conn, on, currency, fetch=fetch)
+    rate, _ = get_rate(conn, on, currency, fetch=fetch)
     return amount / rate
 
 

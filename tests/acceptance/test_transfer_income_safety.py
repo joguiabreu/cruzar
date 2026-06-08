@@ -1,5 +1,6 @@
-"""AC19 guard: real third-party income must never be flagged is_transfer by a
-description rule (it would silently drop from Earned). Exercises ADR-15 step-1
+"""Transfer/income safety (ADR-15): real third-party income must never be flagged
+is_transfer by a description rule (it would silently drop from Earned). Exercises
+ADR-15 step-1
 with the live config/flows.yaml patterns: outbound / own-funding / internal-FX
 descriptions ARE flagged; inbound transfers, ATM withdrawals, and purchases are
 NOT.
@@ -67,7 +68,7 @@ def _flag(conn: sqlite3.Connection, desc: str) -> int:
     return int(row[0])
 
 
-def test_ac19_income_not_flagged_as_transfer(db_path: Path) -> None:
+def test_transfer_income_safety(db_path: Path) -> None:
     patterns = yaml.safe_load(_FLOWS_YAML.read_text(encoding="utf-8"))["transfer_patterns"]
 
     conn = connect(db_path)

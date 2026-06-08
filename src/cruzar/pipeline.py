@@ -14,7 +14,7 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
-from cruzar import categorize, report, transfers
+from cruzar import categorize, fx, report, transfers
 from cruzar.config import load_config
 from cruzar.db import connect, init_schema
 from cruzar.parsers import get_parser
@@ -70,7 +70,13 @@ def process(
         _ingest_inbox(conn, Path(inbox_dir))
         transfers.detect(conn, config.transfer_patterns)  # normalize (ADR-15)
         categorize.categorize(conn)
-        report.write_reports(conn, Path(reports_dir))
+        # FX for Net Worth: offline → no fetch (cache/manual rates only).
+        fetch = (
+            None
+            if config.fx_offline
+            else fx.live_fetcher(access_key=config.fx_access_key, timeout=config.fx_timeout)
+        )
+        report.write_reports(conn, Path(reports_dir), fetch=fetch)
     finally:
         conn.close()
 

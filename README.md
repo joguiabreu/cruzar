@@ -99,6 +99,13 @@ generated Markdown (placeholder data shown):
 ```text
 # Cruzar — 2026-05
 
+## Summary
+
+| Month | Earned | Spent | Net Worth |
+| --- | --- | --- | --- |
+| 2026-05 | 2000.00 | -52.50 | 18230.40 |
+| 2026-04 | 2000.00 | -610.00 | 17800.10 |
+
 ## Spending Detail
 
 | Date | Amount | Currency | Merchant | Category |
@@ -107,7 +114,13 @@ generated Markdown (placeholder data shown):
 | 2026-05-20 | -42.50 | EUR | Corner Grocer | Groceries |
 ```
 
-(Transfers between your own accounts are excluded — see [Transfers](#transfers).)
+**Summary** (Section 1) is in EUR: one row per month (last 12, newest first),
+computed as of each month-end. **Earned/Spent** are cash-account flows; **Net
+Worth** sums cash balances + holdings value across accounts, converting foreign
+holdings at the month-end rate (see [FX rates](#fx-rates)). Portfolio Δ and a
+per-position Investment Detail section are upcoming. The **Spending Detail** section
+is native-currency; transfers between your own accounts are excluded — see
+[Transfers](#transfers).
 
 ## Account setup
 
