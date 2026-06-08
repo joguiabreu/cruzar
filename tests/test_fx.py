@@ -136,7 +136,8 @@ def test_manual_seed_feeds_fx_rates(tmp_path: Path) -> None:
     conn = _db(tmp_path)
     config = Config(
         base_currency="EUR", accounts=[], categories=[], merchants=[],
-        transfer_patterns=[], fx_rates=[ManualRate("2026-05-31", "USD", Decimal("1.4"))],
+        transfer_patterns=[], investment_flow_patterns=[],
+        fx_rates=[ManualRate("2026-05-31", "USD", Decimal("1.4"))],
     )
     seed_config(conn, config)
     assert get_rate(conn, _D, "USD", fetch=None) == (Decimal("1.4"), False)

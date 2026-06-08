@@ -2,7 +2,8 @@
 
 Plan of record (decisions settled). Implements the already-specified Section 4 — a
 per-position view of the holdings Net Worth aggregates. Reuses `holdings_snapshot`
-+ FX; no new ADR, no schema change.
+
+- FX; no new ADR, no schema change.
 
 ## Section 4 (as built)
 
@@ -42,8 +43,8 @@ then a base-currency Grand Total.
   simply value−cost).
 - **D2 — Currency & totals. AGREED, with a build correction.** Holdings render in
   native currency; totals in EUR via the month-end rate (degrade a cell to `n/a` on
-  FX failure, like the Summary). **Build note:** real IBKR holdings are *mixed
-  currency* (EUR + USD in one account), which the SPEC's "native per subsection"
+  FX failure, like the Summary). **Build note:** real IBKR holdings are _mixed
+  currency_ (EUR + USD in one account), which the SPEC's "native per subsection"
   didn't anticipate — so a **Currency column** is added per holding and per-account
   totals are EUR (a native total would be meaningless when currencies mix). SPEC
   §Outputs Section 4 updated to match.
@@ -80,4 +81,7 @@ tests/acceptance/test_ac09_report_sections.py  # section presence + order; Δ/n/
   Detail with the IBKR/Degiro positions and an EUR Grand Total.
 - **"Done"** = per-position holdings render, Δ where cost is known, Grand Total in
   EUR; section present in order.
+
+```
+
 ```

@@ -75,6 +75,8 @@ product behavior, `docs/SPEC.md` wins; ask before deviating from either.
   Once decisions are settled, **delete the `.html` and write the final
   `docs/plans/plan_NNN_<slug>.md`** from it (the committed plan of record). Write
   the plan, then STOP — do not implement until I reply "address notes, implement."
+  - **Plan HTML is dark mode by default** (dark background, light text) unless I
+    ask otherwise.
 - **Never list a fixture/oracle sign-off as a plan decision.** It is already
   mandated (see Testing conventions) — not a choice. Don't put it in a plan's
   decisions; just propose the obviously-fake table inline at implementation time

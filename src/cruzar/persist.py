@@ -93,10 +93,12 @@ def seed_config(conn: sqlite3.Connection, config: Config) -> None:
     for acct in config.accounts:
         conn.execute(
             "INSERT INTO accounts(institution, name, account_match, source_type, "
-            "account_type, currency, created_at) VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "account_type, currency, emits_cash_flows, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(institution, account_match) DO UPDATE SET "
             "name = excluded.name, source_type = excluded.source_type, "
-            "account_type = excluded.account_type, currency = excluded.currency",
+            "account_type = excluded.account_type, currency = excluded.currency, "
+            "emits_cash_flows = excluded.emits_cash_flows",
             (
                 acct.institution,
                 acct.name,
@@ -104,6 +106,7 @@ def seed_config(conn: sqlite3.Connection, config: Config) -> None:
                 acct.source_type,
                 acct.account_type,
                 acct.currency,
+                int(acct.emits_cash_flows),
                 _now(),
             ),
         )

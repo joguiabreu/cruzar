@@ -3,8 +3,8 @@
 One file per calendar month with activity: reports/cruzar-YYYY-MM.md. Reports are
 derived and regenerable (ADR-3); this is read-only w.r.t. the DB (AC13). Section 1
 shows up to the last 12 months (descending) as of each report's month, in EUR
-(ADR-16, FX at the persisted period-end rate). Investment Detail and
-Needs-Categorization sections are later slices.
+(ADR-16, FX at the persisted period-end rate), including Portfolio Δ (ADR-14).
+The Needs-Categorization section is a later slice.
 """
 
 from __future__ import annotations
@@ -42,24 +42,47 @@ def _cell(compute: Callable[[], Decimal], *, what: str, ym: str) -> str:
         return "n/a"
 
 
+def _delta_cell(
+    conn: sqlite3.Connection, ym: str, patterns: list[str], *, fetch: Fetcher | None
+) -> str:
+    """Portfolio Δ (ADR-14): '—' when no prior snapshot, the gross flag when
+    contributions are undetected, and 'n/a' if its FX rate is unavailable."""
+    try:
+        delta = metrics.portfolio_delta(conn, ym, patterns=patterns, fetch=fetch)
+    except FxError:
+        logger.warning("FX unavailable for %s Portfolio Δ; rendering 'n/a'", ym)
+        return "n/a"
+    if delta is None:
+        return "—"
+    if delta.flagged:
+        return f"{_eur(delta.value)} (gross — contributions undetected)"
+    return _eur(delta.value)
+
+
 def _summary_section(
-    conn: sqlite3.Connection, up_to: str, all_months: list[str], *, fetch: Fetcher | None
+    conn: sqlite3.Connection,
+    up_to: str,
+    all_months: list[str],
+    patterns: list[str],
+    *,
+    fetch: Fetcher | None,
 ) -> list[str]:
     rows = [m for m in all_months if m <= up_to][:_SUMMARY_MONTHS]  # all_months is desc
     lines = [
         "## Summary",
         "",
-        "| Month | Earned | Spent | Net Worth |",
-        "| --- | --- | --- | --- |",
+        "| Month | Earned | Spent | Portfolio Δ | Net Worth |",
+        "| --- | --- | --- | --- | --- |",
     ]
     for ym in rows:
         end = metrics.month_end(ym)
         earned = _cell(partial(metrics.earned, conn, ym, fetch=fetch), what="Earned", ym=ym)
         spent = _cell(partial(metrics.spent, conn, ym, fetch=fetch), what="Spent", ym=ym)
+        delta = _delta_cell(conn, ym, patterns, fetch=fetch)
         net_worth = _cell(
             partial(metrics.net_worth, conn, end, fetch=fetch), what="Net Worth", ym=ym
         )
-        lines.append(f"| {ym} | {earned} | {spent} | {net_worth} |")
+        lines.append(f"| {ym} | {earned} | {spent} | {delta} | {net_worth} |")
     lines.append("")
     return lines
 
@@ -181,13 +204,18 @@ def _investment_section(
 
 
 def write_reports(
-    conn: sqlite3.Connection, reports_dir: Path, *, fetch: Fetcher | None = None
+    conn: sqlite3.Connection,
+    reports_dir: Path,
+    *,
+    investment_flow_patterns: list[str] | None = None,
+    fetch: Fetcher | None = None,
 ) -> None:
+    patterns = investment_flow_patterns or []
     reports_dir.mkdir(parents=True, exist_ok=True)
     months = metrics.months_available(conn)
     for year_month in months:
         lines = [f"# Cruzar — {year_month}", ""]
-        lines += _summary_section(conn, year_month, months, fetch=fetch)
+        lines += _summary_section(conn, year_month, months, patterns, fetch=fetch)
         lines += _spending_section(conn, year_month)
         lines += _earning_section(conn, year_month)
         lines += _investment_section(conn, metrics.month_end(year_month), fetch=fetch)

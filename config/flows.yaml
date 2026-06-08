@@ -19,4 +19,12 @@ transfer_patterns:
   - "Carregamento com"       # Revolut: top-up (cartão / Google Pay) — funding from your own money
   - "Conversão cambial"      # Revolut: internal currency exchange between your own wallets
 
-# investment_flow_patterns: []   # ADR-14 / Portfolio Δ slice — not consumed yet
+# investment_flow_patterns (ADR-14): description rules identifying EXTERNAL cash
+# flows on investment accounts — deposits/withdrawals that fund or drain the
+# account from outside. They are subtracted from gross return to give Portfolio Δ.
+# Keep them deposit/withdrawal-specific: "Flatex Interest Income" is a RETURN (not a
+# contribution) and "Compra" is an internal buy — both must stay out of NetContrib.
+# Account-pair transfers (checking→brokerage) are already caught via is_transfer; a
+# pattern here adds the case where the funding side is an untracked external bank.
+investment_flow_patterns:
+  - "flatex Deposit"          # Degiro: external cash deposit into the brokerage

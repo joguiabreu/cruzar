@@ -30,6 +30,10 @@ CREATE TABLE IF NOT EXISTS accounts (
     currency     TEXT NOT NULL,      -- ISO 4217
     created_at   TEXT NOT NULL,      -- immutable
     closed_at    TEXT,               -- nullable
+    -- Parser capability (ADR-14): can this account's parser emit cash-flow
+    -- transactions (deposits/withdrawals)? 0 => external contributions are
+    -- undetectable, so its Portfolio Δ is reported gross and flagged.
+    emits_cash_flows INTEGER NOT NULL DEFAULT 1,
     UNIQUE(institution, account_match)
 );
 

@@ -2,13 +2,15 @@
 
 Earned/Spent are cash-account flows for a month; Net Worth is the period-end stock
 (cash closing balances + holdings value) as of a month-end, converted to base (EUR)
-at that month-end's rate (ADR-16 / ADR-5). No writes and no rendering here — that
-keeps these trivially testable; ``report.py`` formats the results.
+at that month-end's rate (ADR-16 / ADR-5). Portfolio Δ is total return net of
+external contributions over investment accounts (ADR-14). No writes and no rendering
+here — that keeps these trivially testable; ``report.py`` formats the results.
 """
 
 from __future__ import annotations
 
 import calendar
+import re
 import sqlite3
 from collections import defaultdict
 from dataclasses import dataclass
@@ -35,6 +37,17 @@ class Holding:
 class AccountHoldings:
     name: str
     holdings: list[Holding]
+
+
+@dataclass(frozen=True)
+class Delta:
+    """A month's Portfolio Δ (EUR). ``flagged`` marks a gross figure — at least one
+    investment account can't emit cash flows, so its contributions are undetected
+    (ADR-14). ``portfolio_delta`` returns ``None`` (rendered ``—``) when no prior
+    snapshot exists."""
+
+    value: Decimal
+    flagged: bool
 
 
 def month_end(ym: str) -> date:
@@ -97,6 +110,118 @@ def net_worth(conn: sqlite3.Connection, on: date, *, fetch: Fetcher | None) -> D
             for h in holdings:
                 total += fx.convert(conn, Decimal(h["value"]), h["currency"], on, fetch=fetch)
     return total
+
+
+def _prev_month_end(ym: str) -> date:
+    """Month-end of the calendar month before ``ym`` (ADR-14 D2: month-to-month)."""
+    year, month = (int(part) for part in ym.split("-"))
+    prev = f"{year - 1}-12" if month == 1 else f"{year}-{month - 1:02d}"
+    return month_end(prev)
+
+
+def iv(conn: sqlite3.Connection, on: date, *, fetch: Fetcher | None) -> Decimal:
+    """Total investment value (ADR-14) at month-end ``on``: over investment accounts,
+    the latest uninvested cash ``closing_balance`` ≤ on plus the latest holdings
+    snapshot ≤ on, each converted to EUR at ``on``'s rate. Securities + cash means
+    internal buys/sells net to zero, so they don't pollute the figure."""
+    end = on.isoformat()
+    total = Decimal(0)
+    accounts = conn.execute(
+        "SELECT id, currency FROM accounts "
+        f"WHERE account_type IN ({','.join('?' * len(_INVESTMENT_TYPES))})",
+        _INVESTMENT_TYPES,
+    ).fetchall()
+    for acct in accounts:
+        stmt = conn.execute(
+            "SELECT closing_balance FROM statements WHERE account_id = ? "
+            "AND period_end <= ? ORDER BY period_end DESC LIMIT 1",
+            (acct["id"], end),
+        ).fetchone()
+        if stmt is not None:
+            total += fx.convert(conn, Decimal(stmt["closing_balance"]), acct["currency"], on, fetch=fetch)
+        latest = conn.execute(
+            "SELECT MAX(snapshot_date) AS d FROM holdings_snapshot "
+            "WHERE account_id = ? AND snapshot_date <= ?",
+            (acct["id"], end),
+        ).fetchone()
+        if latest is not None and latest["d"] is not None:
+            for h in conn.execute(
+                "SELECT value, currency FROM holdings_snapshot "
+                "WHERE account_id = ? AND snapshot_date = ?",
+                (acct["id"], latest["d"]),
+            ).fetchall():
+                total += fx.convert(conn, Decimal(h["value"]), h["currency"], on, fetch=fetch)
+    return total
+
+
+def net_contrib(
+    conn: sqlite3.Connection, ym: str, patterns: list[str], *, fetch: Fetcher | None
+) -> Decimal:
+    """Net EXTERNAL cash flows into investment accounts in ``ym`` (ADR-14), in EUR.
+    A txn counts iff its account ``emits_cash_flows`` AND it is either a detected
+    transfer (``is_transfer``, e.g. a checking→brokerage pair) or its description
+    matches an ``investment_flow_pattern`` (an external deposit/withdrawal). Internal
+    trades are excluded. Inbound is positive, outbound negative."""
+    compiled = [re.compile(p, re.IGNORECASE) for p in patterns]
+    rows = conn.execute(
+        "SELECT a.currency AS currency, t.amount AS amount, t.is_transfer AS is_transfer, "
+        "t.description_raw AS description_raw FROM transactions t "
+        "JOIN statements s ON t.statement_id = s.id "
+        "JOIN accounts a ON s.account_id = a.id "
+        f"WHERE a.account_type IN ({','.join('?' * len(_INVESTMENT_TYPES))}) "
+        "AND a.emits_cash_flows = 1 AND substr(t.date, 1, 7) = ?",
+        (*_INVESTMENT_TYPES, ym),
+    ).fetchall()
+    by_currency: dict[str, Decimal] = defaultdict(lambda: Decimal(0))
+    for row in rows:
+        external = row["is_transfer"] or any(
+            c.search(row["description_raw"]) for c in compiled
+        )
+        if external:
+            by_currency[row["currency"]] += Decimal(row["amount"])
+    end = month_end(ym)
+    return sum(
+        (fx.convert(conn, amount, currency, end, fetch=fetch) for currency, amount in by_currency.items()),
+        Decimal(0),
+    )
+
+
+def portfolio_delta(
+    conn: sqlite3.Connection, ym: str, *, patterns: list[str], fetch: Fetcher | None
+) -> Delta | None:
+    """Portfolio Δ for ``ym`` (ADR-14): ``(IV_end − IV_prev) − NetContrib``, in EUR.
+    Returns ``None`` (rendered ``—``) when no prior snapshot exists. ``flagged`` is set
+    when an investment account can't emit cash flows, so its contributions are
+    undetected and its slice of Δ is gross."""
+    end = month_end(ym)
+    prev = _prev_month_end(ym)
+    prior = conn.execute(
+        "SELECT 1 FROM holdings_snapshot h JOIN accounts a ON h.account_id = a.id "
+        f"WHERE a.account_type IN ({','.join('?' * len(_INVESTMENT_TYPES))}) "
+        "AND h.snapshot_date <= ? LIMIT 1",
+        (*_INVESTMENT_TYPES, prev.isoformat()),
+    ).fetchone()
+    if prior is None:
+        return None  # no prior snapshot → "—"
+    flagged = _has_gross_account(conn, end)
+    gross = iv(conn, end, fetch=fetch) - iv(conn, prev, fetch=fetch)
+    return Delta(gross - net_contrib(conn, ym, patterns, fetch=fetch), flagged)
+
+
+def _has_gross_account(conn: sqlite3.Connection, on: date) -> bool:
+    """Any investment account that can't emit cash flows yet holds value by ``on``
+    (a snapshot or a statement ≤ on) — its contributions are undetectable (ADR-14)."""
+    end = on.isoformat()
+    row = conn.execute(
+        "SELECT 1 FROM accounts a WHERE a.emits_cash_flows = 0 "
+        f"AND a.account_type IN ({','.join('?' * len(_INVESTMENT_TYPES))}) AND ("
+        "  EXISTS (SELECT 1 FROM holdings_snapshot h "
+        "          WHERE h.account_id = a.id AND h.snapshot_date <= ?) "
+        "  OR EXISTS (SELECT 1 FROM statements s "
+        "             WHERE s.account_id = a.id AND s.period_end <= ?)) LIMIT 1",
+        (*_INVESTMENT_TYPES, end, end),
+    ).fetchone()
+    return row is not None
 
 
 def investment_holdings(conn: sqlite3.Connection, on: date) -> list[AccountHoldings]:

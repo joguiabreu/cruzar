@@ -76,7 +76,12 @@ def process(
             if config.fx_offline
             else fx.live_fetcher(access_key=config.fx_access_key, timeout=config.fx_timeout)
         )
-        report.write_reports(conn, Path(reports_dir), fetch=fetch)
+        report.write_reports(
+            conn,
+            Path(reports_dir),
+            investment_flow_patterns=config.investment_flow_patterns,
+            fetch=fetch,
+        )
     finally:
         conn.close()
 

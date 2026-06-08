@@ -101,10 +101,10 @@ generated Markdown (placeholder data shown):
 
 ## Summary
 
-| Month | Earned | Spent | Net Worth |
-| --- | --- | --- | --- |
-| 2026-05 | 2000.00 | -52.50 | 18230.40 |
-| 2026-04 | 2000.00 | -610.00 | 17800.10 |
+| Month | Earned | Spent | Portfolio Δ | Net Worth |
+| --- | --- | --- | --- | --- |
+| 2026-05 | 2000.00 | -52.50 | 130.40 | 18230.40 |
+| 2026-04 | 2000.00 | -610.00 | — | 17800.10 |
 
 ## Spending Detail
 
@@ -138,10 +138,14 @@ generated Markdown (placeholder data shown):
 **Summary** (Section 1) is in EUR: one row per month (last 12, newest first),
 computed as of each month-end. **Earned/Spent** are cash-account flows; **Net
 Worth** sums cash balances + holdings value across accounts, converting foreign
-holdings at the month-end rate (see [FX rates](#fx-rates)). **Investment Detail**
-lists each holding per account (native currency, with unrealised Δ vs cost where
-the broker reports it) and a EUR Grand Total; the Portfolio Δ summary column is
-upcoming. The **Spending Detail** and
+holdings at the month-end rate (see [FX rates](#fx-rates)). **Portfolio Δ** is
+total return on your investment accounts net of external contributions, month over
+month — `(value now − value a month ago) − money you paid in or took out`; it shows
+`—` until there's a prior month to compare against, and `(gross — contributions
+undetected)` when a broker's statement can't itemise deposits (see
+[`emits_cash_flows`](#account-setup)). **Investment Detail** lists each holding per
+account (native currency, with unrealised Δ vs cost where the broker reports it) and
+a EUR Grand Total. The **Spending Detail** and
 **Earning Detail** sections are native-currency and itemise that month's
 cash outflows and inflows respectively (Earning Detail's rows sum to the Summary's
 Earned); transfers between your own accounts are excluded — see
@@ -163,6 +167,7 @@ accounts:
     source_type: manual
     account_type: checking        # checking | savings | brokerage | retirement
     currency: EUR
+    # emits_cash_flows: false     # investment accounts only; see the note below
 ```
 
 Then place statements accordingly:
@@ -183,9 +188,15 @@ Adding a new account is a **YAML edit only** (SPEC AC7) — no code change —
 
 > **Investment accounts** (`account_type: brokerage`/`retirement`) capture an
 > immutable `holdings_snapshot` from the statement's positions (each holding in its
-> own native currency) plus the uninvested cash balance. The Net Worth / Portfolio Δ
-> **report** that consumes them is not built yet — this records the data; the
-> reporting lands in a later slice.
+> own native currency) plus the uninvested cash balance. These feed Net Worth and
+> the **Portfolio Δ** summary column.
+>
+> Add `emits_cash_flows: false` (default `true`) when the broker's statement is a
+> periodic *summary* with no per-deposit lines — Interactive Brokers' monthly
+> Activity Statement is the example shipped. Without those lines, external
+> contributions can't be detected, so that account's Portfolio Δ is reported **gross**
+> and flagged `(gross — contributions undetected)` rather than silently mistaking a
+> deposit for a gain (ADR-14).
 
 ## Configuration
 
@@ -199,7 +210,7 @@ the source of truth at runtime; the YAML files are editable inputs (ADR-3).
 | `cruzar.yaml`          | App config: `base_currency` (EUR), `llm_model` (Ollama), `fx`. |
 | `categories.yaml`      | Controlled category vocabulary.                          |
 | `merchants.yaml`       | Merchant names + match patterns for categorization.      |
-| `flows.yaml`           | `transfer_patterns` for transfer detection (see below).  |
+| `flows.yaml`           | `transfer_patterns` (transfer detection) + `investment_flow_patterns` (external contributions, ADR-14). |
 | `fx_rates.yaml`        | *Optional* hand-supplied FX rates (see FX rates below).  |
 
 `config/cruzar.yaml`:
@@ -261,6 +272,17 @@ transfer_patterns:
 
 Detection is recomputed every run from the current patterns, so editing
 `flows.yaml` re-evaluates all transactions on the next `cruzar process`.
+
+`flows.yaml` also holds `investment_flow_patterns` — description rules that mark a
+transaction on an **investment account** as an external contribution/withdrawal
+(money paid in or taken out from outside), so Portfolio Δ can net it out. Keep them
+deposit/withdrawal-specific: a return line like `Flatex Interest Income` must stay
+counted as a gain, not a contribution.
+
+```yaml
+investment_flow_patterns:
+  - "flatex Deposit"          # Degiro: external cash deposit into the brokerage
+```
 
 ## Adding a parser for a new institution
 

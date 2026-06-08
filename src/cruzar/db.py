@@ -44,6 +44,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
         # that always supplies currency, so the default never reaches real rows.
         "TEXT NOT NULL DEFAULT 'EUR'",
     )
+    # ADR-14: parsers default to cash-flow-capable; only IB (monthly summary, no
+    # per-deposit lines) is seeded 0 in sources.yaml. The DEFAULT 1 keeps existing
+    # rows capable, matching the fresh-DDL default.
+    _add_column_if_missing(
+        conn, "accounts", "emits_cash_flows", "INTEGER NOT NULL DEFAULT 1"
+    )
     _make_cost_basis_nullable(conn)
 
 

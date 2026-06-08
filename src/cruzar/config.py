@@ -20,6 +20,10 @@ class AccountConfig:
     source_type: str
     account_type: str
     currency: str
+    # ADR-14: false when the institution's parser cannot emit cash-flow
+    # transactions (e.g. IB's monthly summary), so contributions are undetectable
+    # and Portfolio Δ degrades to gross. Defaults true (most parsers are capable).
+    emits_cash_flows: bool = True
 
 
 @dataclass(frozen=True)
@@ -51,6 +55,7 @@ class Config:
     categories: list[str]
     merchants: list[MerchantConfig]
     transfer_patterns: list[str]  # is_transfer step 1 (ADR-15), from flows.yaml
+    investment_flow_patterns: list[str]  # external contributions (ADR-14), from flows.yaml
     fx_rates: list[ManualRate]  # optional hand-supplied rates from fx_rates.yaml
     # FX provider settings let a fully-offline user disable fetching or supply an
     # exchangerate.host key (ADR-5).
@@ -101,6 +106,7 @@ def load_config(config_dir: str | Path) -> Config:
         categories=list(categories_doc.get("categories", [])),
         merchants=merchants,
         transfer_patterns=list(flows_doc.get("transfer_patterns", [])),
+        investment_flow_patterns=list(flows_doc.get("investment_flow_patterns", [])),
         fx_rates=fx_rates,
         fx_offline=bool(fx_settings.get("offline", False)),
         fx_access_key=fx_settings.get("access_key"),

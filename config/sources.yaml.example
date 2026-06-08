@@ -26,6 +26,7 @@ accounts:
     source_type: manual
     account_type: brokerage            # holdings + uninvested cash
     currency: EUR                      # base currency; holdings carry their own currency
+    emits_cash_flows: false            # monthly summary has no per-deposit lines (ADR-14): Portfolio Δ shown gross
   - institution: degiro
     name: Conta Degiro
     account_match: degiro              # files in data/inbox/degiro/ (Portfolio + Account)

@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Plan 012 — LLM categorization (Section 5 · AC4/15/16/17/18)</title>
+<style>
+  body { font: 15px/1.55 -apple-system, system-ui, sans-serif; max-width: 880px; margin: 2rem auto; padding: 0 1rem; color: #e4e4e7; background: #18181b; }
+  h1 { font-size: 1.6rem; border-bottom: 2px solid #71717a; padding-bottom: .3rem; }
+  h2 { font-size: 1.2rem; margin-top: 1.8rem; border-bottom: 1px solid #3f3f46; padding-bottom: .2rem; }
+  h3 { font-size: 1.02rem; margin-top: 1.2rem; }
+  code { background: #27272a; padding: .1em .35em; border-radius: 3px; font-size: .9em; color: #f4f4f5; }
+  pre { background: #1e1e22; border: 1px solid #3f3f46; border-radius: 5px; padding: .7rem; overflow-x: auto; }
+  pre code { background: none; }
+  .decision { background: #172033; border-left: 4px solid #3b82f6; padding: .5rem .8rem; margin: .7rem 0; }
+  .open { background: #2a1f12; border-left: 4px solid #f59e0b; padding: .5rem .8rem; margin: .7rem 0; }
+  .note { background: #211a33; border-left: 4px solid #8b5cf6; padding: .5rem .8rem; margin: .7rem 0; }
+  table { border-collapse: collapse; margin: .8rem 0; width: 100%; }
+  th, td { border: 1px solid #3f3f46; padding: .35rem .55rem; text-align: left; font-size: .92em; }
+  th { background: #27272a; }
+  a { color: #60a5fa; }
+  .annot { color: #fbbf24; font-style: italic; }
+  ul { margin: .4rem 0; }
+  .tag { display:inline-block; font-size:.72em; font-weight:700; padding:.05em .45em; border-radius:3px; vertical-align:middle; }
+  .settled { background:#14532d; color:#bbf7d0; }
+  .needs { background:#713f12; color:#fef08a; }
+</style>
+</head>
+<body>
+
+<h1>Plan 012 — LLM categorization (Section 5 · AC4b/15/16/17/18)</h1>
+
+<p><strong>Status:</strong> draft for review. Adds the <code>llm</code> tier to
+categorization (ADR-13): for transactions no rule matched, ask the local LLM to
+propose a merchant + category, persist the proposal (ADR-12, never recomputed),
+auto-apply confident in-vocabulary proposals, and surface the rest in the report's
+conditional <strong>Section 5 — Needs Categorization</strong>.</p>
+
+<p><strong>Today:</strong> <code>categorize.py</code> is rule-only; <code>none</code>
+rows never get an LLM proposal; Section 5 doesn't exist; no LLM dependency is installed.</p>
+
+<h2>The contract (SPEC + ADRs)</h2>
+<ul>
+  <li><strong>ADR-13 authority:</strong> <code>manual &gt; rule &gt; llm</code>. A rule
+    may overwrite an <code>llm</code> row; nothing overwrites <code>manual</code>;
+    <code>none</code> is eligible for an LLM proposal.</li>
+  <li><strong>ADR-2:</strong> LLM returns only schema-constrained JSON (no free text,
+    no math — ADR-1).</li>
+  <li><strong>ADR-12:</strong> proposals persisted and <strong>never recomputed</strong>
+    — a re-run over unchanged data makes <em>zero</em> LLM calls (AC15).</li>
+  <li><strong>Section 5 (conditional):</strong> shown iff un-categorized merchants exist.
+    Columns: <code>Raw Description | LLM-Proposed Merchant | LLM-Proposed Category</code>.</li>
+  <li><strong>Edge cases (SPEC):</strong> low-confidence → Needs Categorization, no
+    auto-assign; off-vocabulary category → treat as un-categorized, never silently
+    create a category.</li>
+</ul>
+
+<h2>Scope (read first — D1)</h2>
+<div class="open"><span class="tag needs">DECIDE</span>
+  <strong>D1 — This slice does categorization only; defer the extraction fallback.</strong>
+  AC4 has two LLM uses: (a) <em>extraction</em> when pdfplumber returns &lt;50% of expected
+  columns, and (b) <em>categorization</em> of unmatched merchants. (a) is a whole separate
+  machine (LLM reading PDFs) — I propose deferring it to its own slice and implementing
+  (b) here. AC16 explicitly accepts "trips the &lt;50%-columns fallback <u>or</u> an unmatched
+  transaction", so the categorization path satisfies AC15/16/17/18 and the (b) half of AC4.
+  The AC4 acceptance test this slice adds covers clause (b); clause (a) stays unimplemented
+  and noted. <span class="annot">Confirm scope split, and that leaving AC4(a) for later is OK.</span>
+</div>
+
+<h2>Open decisions — please annotate</h2>
+
+<div class="open"><span class="tag needs">DECIDE</span>
+  <strong>D2 — LLM client library.</strong> ADR-2 names <code>instructor</code>/<code>outlines</code>.
+  Recommend <strong><code>instructor</code> + an OpenAI-compatible client pointed at Ollama</strong>
+  (<code>http://localhost:11434/v1</code>): a Pydantic model gives schema-constrained JSON with
+  the least glue, and instructor handles retries/validation. Adds deps <code>instructor</code>,
+  <code>openai</code>, <code>pydantic</code>. The client sits behind an injectable
+  <code>Protocol</code> (below) so the offline suite never imports or calls it.
+  <span class="annot">Confirm instructor, or prefer raw <code>ollama</code> / <code>outlines</code>?</span>
+</div>
+
+<div class="open"><span class="tag needs">DECIDE</span>
+  <strong>D3 — Persistence model = new <code>llm_categorizations</code> cache table, keyed by
+  exact <code>description_raw</code>.</strong> One LLM call per distinct raw description; repeats
+  reuse it; re-runs read it → zero calls (ADR-12). Exact key (not normalized) for v1 — simple
+  and safe; near-duplicate descriptions each cost one call (noted as a known cost). Columns:
+  <pre><code>llm_categorizations(
+  description_raw TEXT PRIMARY KEY,
+  proposed_merchant  TEXT NOT NULL,
+  proposed_category  TEXT NOT NULL,
+  confidence         REAL NOT NULL,
+  status             TEXT NOT NULL CHECK (status IN ('applied','needs_review')),
+  model              TEXT NOT NULL,     -- which model produced it (for a future --reextract)
+  created_at         TEXT NOT NULL
+)</code></pre>
+  New table via <code>CREATE TABLE IF NOT EXISTS</code> in <code>schema.sql</code> — this is the
+  migration path for a new table (init runs it on old DBs too); schema-parity holds with no
+  <code>_migrate</code> step (that rule is for altering <em>existing</em> tables).
+  <span class="annot">Confirm table + exact-description key.</span>
+</div>
+
+<div class="open"><span class="tag needs">DECIDE</span>
+  <strong>D4 — Auto-apply = upsert a merchant row, link the txn as <code>llm</code>.</strong>
+  When a proposal is confident <em>and</em> its category is in-vocabulary
+  (<code>status='applied'</code>): upsert a <code>merchants</code> row (name=proposed_merchant,
+  category=proposed_category) and set <code>transactions.merchant_id</code> +
+  <code>merchant_source='llm'</code>. Keeps Spending/Earning Detail uniform (one
+  <code>merchant_id</code> join) and matches the data model (<code>merchant_source='llm'</code>
+  alongside the FK). A later rule still overrides it (ADR-13). The alternative — text-only
+  proposal, NULL merchant_id, special-cased in report queries — is messier.
+  <span class="annot">Confirm upsert-merchant approach.</span>
+</div>
+
+<div class="open"><span class="tag needs">DECIDE</span>
+  <strong>D5 — Confidence threshold + config.</strong> Proposal carries a
+  <code>confidence ∈ [0,1]</code>; <code>&lt; min_confidence</code> → <code>needs_review</code>
+  (Section 5, not applied). Add an <code>llm:</code> block to <code>cruzar.yaml</code>:
+  <pre><code>llm:
+  enabled: true                 # false → rule-only, no calls (offline users)
+  model: qwen3:8b               # was top-level llm_model; kept back-compatible
+  host: http://localhost:11434
+  min_confidence: 0.7</code></pre>
+  <span class="annot">Confirm the 0.7 default and the <code>llm:</code> block shape.</span>
+</div>
+
+<div class="open"><span class="tag needs">DECIDE</span>
+  <strong>D6 — Degradation when Ollama is unavailable.</strong> Categorization is enrichment, not
+  source parsing — so per the CLAUDE.md integration rule it should <strong>degrade, not crash</strong>:
+  wrap transport/parse failures into an <code>LlmError</code>, log a warning, leave those rows
+  <code>none</code> (they appear in Section 5), and finish the run. <span class="annot">Confirm
+  degrade-don't-crash (the report still renders without a running LLM).</span>
+</div>
+
+<div class="open"><span class="tag needs">DECIDE</span>
+  <strong>D7 — Section 5 scope = this report-month's <code>none</code> cash transactions.</strong>
+  Consistent with Sections 2/3 ("this month"). Each distinct raw description shows once with its
+  persisted proposal (the <code>needs_review</code> one if present, else blank). <span class="annot">
+  Confirm month-scoped (vs all-time un-categorized).</span>
+</div>
+
+<div class="open"><span class="tag needs">DECIDE</span>
+  <strong>D8 — Defer <code>recategorize</code> + <code>--reextract</code> CLI.</strong> ADR-13's
+  <code>cruzar recategorize</code> (manual tier) and ADR-12's <code>--reextract</code> are real but
+  separable; this slice ships automatic llm proposals + caching + Section 5. AC17 (manual frozen)
+  is testable by seeding a <code>manual</code> row directly. <span class="annot">Confirm deferral.</span>
+</div>
+
+<h2>Settled (derived — stated, not asked)</h2>
+<div class="decision"><span class="tag settled">SETTLED</span>
+  Off-vocabulary proposed category → <code>needs_review</code>, never create a category (SPEC edge).</div>
+<div class="decision"><span class="tag settled">SETTLED</span>
+  Re-run flow (ADR-12/13): rules run first; a rule matching an <code>llm</code> row demotes it to
+  <code>rule</code> with no call (AC18); <code>none</code> rows are looked up in the cache before any
+  call; an already-<code>llm</code> row is left as-is (no call). Net: zero calls on an unchanged re-run (AC15).</div>
+<div class="decision"><span class="tag settled">SETTLED</span>
+  Computations stay in Python/SQL (ADR-1); the LLM only proposes {merchant, category, confidence}.</div>
+
+<h2>Design</h2>
+
+<h3>The injectable client (offline-safe)</h3>
+<pre><code># categorize.py
+class Proposal(NamedTuple):
+    merchant: str
+    category: str
+    confidence: float
+
+class LlmCategorizer(Protocol):
+    def propose(self, description: str, categories: list[str]) -> Proposal | None: ...
+        # returns None on a clean "I don't know"; raises LlmError on transport failure
+
+def categorize(conn, *, propose: LlmCategorizer | None = None,
+               model: str = "", min_confidence: float = 0.7) -> None:
+    # 1. rule pass (existing): manual frozen; rule sets/overrides; else -> none
+    # 2. llm pass over remaining 'none' rows, grouped by description_raw:
+    #    - cache hit -> apply or skip per stored status; NO call
+    #    - cache miss and propose is None -> leave 'none' (rule-only / disabled)
+    #    - else call propose(); classify -> upsert llm_categorizations; apply if 'applied'
+</code></pre>
+<ul>
+  <li>Tests inject a fake <code>propose</code> (counting spy / raise-on-call) — the real Ollama
+    client lives in a new <code>llm.py</code> and is only built by <code>pipeline.process</code>
+    when <code>llm.enabled</code>.</li>
+  <li>"applied" iff <code>confidence ≥ min_confidence</code> AND
+    <code>proposed_category ∈ categories</code>.</li>
+</ul>
+
+<h3>llm.py (new — the only module that imports instructor/openai)</h3>
+<ul>
+  <li><code>ollama_categorizer(model, host) -&gt; LlmCategorizer</code>: builds the instructor
+    client; <code>propose()</code> sends the description + the controlled category list, parses a
+    Pydantic <code>Proposal</code>, wraps any transport/validation failure as <code>LlmError</code>.</li>
+  <li>Prompt: "Given this bank-statement description, name the merchant and pick exactly one
+    category from this list; give a 0–1 confidence." No amounts, no math (ADR-1).</li>
+</ul>
+
+<h3>report.py — Section 5</h3>
+<ul>
+  <li><code>_needs_categorization_section</code>: the report-month's cash transactions with
+    <code>merchant_source='none'</code>; one row per distinct description with its
+    <code>needs_review</code> proposal (merchant/category) if persisted, else blank. Rendered only
+    if non-empty (AC9). Appended after Investment Detail.</li>
+</ul>
+
+<h3>pipeline.py / config.py / cruzar.yaml</h3>
+<ul>
+  <li><code>config</code>: parse the <code>llm:</code> block (back-compat: fall back to top-level
+    <code>llm_model</code>).</li>
+  <li><code>pipeline.process</code>: build the categorizer when <code>enabled</code> (else
+    <code>None</code>); pass <code>propose</code> + <code>min_confidence</code> to
+    <code>categorize.categorize</code>.</li>
+</ul>
+
+<h2>Acceptance tests (the gate)</h2>
+<table>
+  <tr><th>AC</th><th>What it asserts</th><th>How</th></tr>
+  <tr><td>AC4(b)</td><td>LLM invoked only for pattern-unmatched txns, and only when no persisted prior</td><td>counting spy + a pre-seeded cache row that must NOT trigger a call</td></tr>
+  <tr><td>AC15</td><td>second run → zero LLM calls</td><td>raise-on-call stub; run completes</td></tr>
+  <tr><td>AC16</td><td>first run with an unmatched txn → calls &gt; 0</td><td>counting spy</td></tr>
+  <tr><td>AC17</td><td><code>manual</code> never modified</td><td>seed a manual row a rule AND the llm would match; assert unchanged</td></tr>
+  <tr><td>AC18</td><td>a rule matching an <code>llm</code> row → becomes <code>rule</code>, no call</td><td>raise-on-call stub</td></tr>
+</table>
+<p>Plus a Section-5 render test (proposal shown; section absent when all categorized) and a
+degradation test (D6: <code>propose</code> raises <code>LlmError</code> → rows stay <code>none</code>,
+run completes, Section 5 lists them). All offline — no fixture ever reaches Ollama.</p>
+
+<div class="note">Fixture/oracle values for the AC tests will be proposed inline (obviously-fake
+descriptions/merchants) for your sign-off at implementation time, per standing procedure.</div>
+
+<h2>Out of scope</h2>
+<ul>
+  <li>AC4(a) LLM <em>extraction</em> fallback (&lt;50% columns) — its own slice.</li>
+  <li><code>cruzar recategorize</code> (manual tier CLI) and <code>--reextract</code> — follow-up.</li>
+  <li>Description normalization / fuzzy merchant grouping — v2.</li>
+</ul>
+
+<h2>README + SPEC</h2>
+<ul>
+  <li>README: document the <code>llm:</code> config block, the Needs-Categorization section, and the
+    "LLM optional — degrades gracefully if Ollama isn't running" behavior.</li>
+  <li>SPEC: no ADR/AC change anticipated. If D1 lands, add a one-line note that AC4(a) extraction is
+    a later slice (does not weaken the AC). <span class="annot">OK to add that note?</span></li>
+</ul>
+
+<h2>Definition of done</h2>
+<ul>
+  <li>AC4(b)/15/16/17/18 tests green; Section-5 + degradation tests green.</li>
+  <li>schema-parity + smoke green (new table appears on upgraded DBs).</li>
+  <li><code>uv run ruff check . &amp;&amp; uv run pyright &amp;&amp; uv run pytest</code> clean.</li>
+  <li>README updated.</li>
+  <li><strong>Real-run gate (yours):</strong> <code>uv run cruzar process</code> with Ollama running
+    actually proposes + persists on the real inbox — and a second run makes zero calls.</li>
+</ul>
+
+<hr>
+<p><em>Plan written. Stopping here — I won't implement until you reply "address notes, implement."
+Annotate D1–D8 (and the two SPEC/README annotation points).</em></p>
+
+</body>
+</html>
