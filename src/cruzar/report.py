@@ -16,7 +16,9 @@ from decimal import Decimal
 from functools import partial
 from pathlib import Path
 
-from cruzar import metrics
+from datetime import date
+
+from cruzar import fx, metrics
 from cruzar.fx import Fetcher, FxError
 
 logger = logging.getLogger(__name__)
@@ -124,6 +126,60 @@ def _earning_section(conn: sqlite3.Connection, year_month: str) -> list[str]:
     return lines
 
 
+def _investment_section(
+    conn: sqlite3.Connection, on: date, *, fetch: Fetcher | None
+) -> list[str]:
+    """Section 4: per-account holdings (native, with Δ vs cost) + EUR totals."""
+    accounts = metrics.investment_holdings(conn, on)
+    lines = ["## Investment Detail", ""]
+    if not accounts:
+        lines += ["_No investment holdings._", ""]
+        return lines
+
+    grand_total = Decimal(0)
+    grand_ok = True
+    for acct in accounts:
+        lines += [
+            f"### {acct.name}",
+            "",
+            "| Symbol | Quantity | Currency | Cost Basis | Current Value | Δ Amount | Δ % |",
+            "| --- | --- | --- | --- | --- | --- | --- |",
+        ]
+        acct_eur = Decimal(0)
+        acct_ok = True
+        for h in acct.holdings:
+            if h.cost_basis is not None:
+                delta = h.value - h.cost_basis
+                cost, amt = _eur(h.cost_basis), _eur(delta)
+                pct = f"{delta / h.cost_basis * 100:.1f}%" if h.cost_basis != 0 else "n/a"
+            else:
+                cost = amt = pct = "n/a"
+            lines.append(
+                f"| {h.symbol} | {h.quantity} | {h.currency} | {cost} | "
+                f"{_eur(h.value)} | {amt} | {pct} |"
+            )
+            try:
+                acct_eur += fx.convert(conn, h.value, h.currency, on, fetch=fetch)
+            except FxError:
+                acct_ok = False
+                logger.warning("FX unavailable for %s %s; account total degraded", on, h.symbol)
+        lines += [f"| **Total (EUR)** |  |  |  | {_eur(acct_eur) if acct_ok else 'n/a'} |  |  |", ""]
+        if acct_ok:
+            grand_total += acct_eur
+        else:
+            grand_ok = False
+
+    lines += [
+        "### Grand Total (EUR)",
+        "",
+        "| Current Value |",
+        "| --- |",
+        f"| {_eur(grand_total) if grand_ok else 'n/a'} |",
+        "",
+    ]
+    return lines
+
+
 def write_reports(
     conn: sqlite3.Connection, reports_dir: Path, *, fetch: Fetcher | None = None
 ) -> None:
@@ -134,6 +190,7 @@ def write_reports(
         lines += _summary_section(conn, year_month, months, fetch=fetch)
         lines += _spending_section(conn, year_month)
         lines += _earning_section(conn, year_month)
+        lines += _investment_section(conn, metrics.month_end(year_month), fetch=fetch)
         (reports_dir / f"cruzar-{year_month}.md").write_text(
             "\n".join(lines), encoding="utf-8"
         )

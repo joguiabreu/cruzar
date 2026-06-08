@@ -118,13 +118,30 @@ generated Markdown (placeholder data shown):
 | Date | Amount | Currency | Source |
 | --- | --- | --- | --- |
 | 2026-05-22 | 2000.00 | EUR | Example Salary |
+
+## Investment Detail
+
+### Example Brokerage
+
+| Symbol | Quantity | Currency | Cost Basis | Current Value | Δ Amount | Δ % |
+| --- | --- | --- | --- | --- | --- | --- |
+| EXMPL | 2 | USD | 300.00 | 360.00 | 60.00 | 20.0% |
+| **Total (EUR)** |  |  |  | 331.20 |  |  |
+
+### Grand Total (EUR)
+
+| Current Value |
+| --- |
+| 331.20 |
 ```
 
 **Summary** (Section 1) is in EUR: one row per month (last 12, newest first),
 computed as of each month-end. **Earned/Spent** are cash-account flows; **Net
 Worth** sums cash balances + holdings value across accounts, converting foreign
-holdings at the month-end rate (see [FX rates](#fx-rates)). Portfolio Δ and a
-per-position Investment Detail section are upcoming. The **Spending Detail** and
+holdings at the month-end rate (see [FX rates](#fx-rates)). **Investment Detail**
+lists each holding per account (native currency, with unrealised Δ vs cost where
+the broker reports it) and a EUR Grand Total; the Portfolio Δ summary column is
+upcoming. The **Spending Detail** and
 **Earning Detail** sections are native-currency and itemise that month's
 cash outflows and inflows respectively (Earning Detail's rows sum to the Summary's
 Earned); transfers between your own accounts are excluded — see

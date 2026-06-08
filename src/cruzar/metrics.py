@@ -11,6 +11,7 @@ from __future__ import annotations
 import calendar
 import sqlite3
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
@@ -18,6 +19,22 @@ from cruzar import fx
 from cruzar.fx import Fetcher
 
 _CASH_TYPES = ("checking", "savings")
+_INVESTMENT_TYPES = ("brokerage", "retirement")
+
+
+@dataclass(frozen=True)
+class Holding:
+    symbol: str
+    quantity: Decimal
+    currency: str
+    cost_basis: Decimal | None  # None when the broker doesn't report it (e.g. Degiro)
+    value: Decimal  # market value, native currency
+
+
+@dataclass(frozen=True)
+class AccountHoldings:
+    name: str
+    holdings: list[Holding]
 
 
 def month_end(ym: str) -> date:
@@ -80,6 +97,43 @@ def net_worth(conn: sqlite3.Connection, on: date, *, fetch: Fetcher | None) -> D
             for h in holdings:
                 total += fx.convert(conn, Decimal(h["value"]), h["currency"], on, fetch=fetch)
     return total
+
+
+def investment_holdings(conn: sqlite3.Connection, on: date) -> list[AccountHoldings]:
+    """Per investment account, the latest holdings snapshot ≤ ``on`` (Section 4)."""
+    end = on.isoformat()
+    result: list[AccountHoldings] = []
+    accounts = conn.execute(
+        "SELECT id, name FROM accounts "
+        f"WHERE account_type IN ({','.join('?' * len(_INVESTMENT_TYPES))}) "
+        "ORDER BY name",
+        _INVESTMENT_TYPES,
+    ).fetchall()
+    for acct in accounts:
+        latest = conn.execute(
+            "SELECT MAX(snapshot_date) AS d FROM holdings_snapshot "
+            "WHERE account_id = ? AND snapshot_date <= ?",
+            (acct["id"], end),
+        ).fetchone()
+        if latest is None or latest["d"] is None:
+            continue
+        rows = conn.execute(
+            "SELECT symbol, quantity, currency, cost_basis, value FROM holdings_snapshot "
+            "WHERE account_id = ? AND snapshot_date = ? ORDER BY symbol",
+            (acct["id"], latest["d"]),
+        ).fetchall()
+        holdings = [
+            Holding(
+                symbol=r["symbol"],
+                quantity=Decimal(r["quantity"]),
+                currency=r["currency"],
+                cost_basis=Decimal(r["cost_basis"]) if r["cost_basis"] is not None else None,
+                value=Decimal(r["value"]),
+            )
+            for r in rows
+        ]
+        result.append(AccountHoldings(name=acct["name"], holdings=holdings))
+    return result
 
 
 def _flow(

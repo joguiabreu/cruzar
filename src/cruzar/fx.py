@@ -173,12 +173,16 @@ def convert(
 
 
 def _persist(conn: sqlite3.Connection, on: date, quote: str, rate: Decimal) -> None:
+    # Commit immediately: a fetched rate is an independently-durable cache entry
+    # (AC10 — fetched once, then reused across runs). Without this the report's
+    # inserts are lost on close and every run re-fetches from the network.
     conn.execute(
         "INSERT INTO fx_rates(date, base_currency, quote_currency, rate) "
         "VALUES (?, ?, ?, ?) ON CONFLICT(date, base_currency, quote_currency) "
         "DO NOTHING",
         (on.isoformat(), BASE, quote, str(rate)),
     )
+    conn.commit()
 
 
 def _nearest_cached(conn: sqlite3.Connection, on: date, quote: str) -> Decimal | None:

@@ -35,7 +35,8 @@ def _account(conn: sqlite3.Connection, account_type: str) -> int:
 
 
 def test_ac10_summary_fx_reproducible(tmp_path: Path) -> None:
-    conn = connect(tmp_path / "rep.db")
+    db_path = tmp_path / "rep.db"
+    conn = connect(db_path)
     try:
         init_schema(conn)
         checking = _account(conn, "checking")
@@ -66,12 +67,20 @@ def test_ac10_summary_fx_reproducible(tmp_path: Path) -> None:
         spy = _Spy(Decimal("2.00"))
         report.write_reports(conn, tmp_path / "r1", fetch=spy)
         first = spy.calls
-        report.write_reports(conn, tmp_path / "r2", fetch=spy)
-
-        assert first >= 1                 # fetched the USD month-end rate on the first run
-        assert spy.calls == first         # second run uses the persisted rate (no re-fetch)
-        f1 = (tmp_path / "r1" / "cruzar-2026-05.md").read_text(encoding="utf-8")
-        f2 = (tmp_path / "r2" / "cruzar-2026-05.md").read_text(encoding="utf-8")
-        assert f1 == f2 and "Net Worth" in f1  # identical, with the Summary present
+        assert first >= 1  # fetched the USD month-end rate on the first run
     finally:
         conn.close()
+
+    # Reopen as a SEPARATE connection (simulates a later `cruzar process`). The rate
+    # must have been persisted+committed, so the second run does NOT re-fetch.
+    conn2 = connect(db_path)
+    try:
+        spy2 = _Spy(Decimal("9.99"))  # different rate: if it were used, output would differ
+        report.write_reports(conn2, tmp_path / "r2", fetch=spy2)
+        assert spy2.calls == 0  # served entirely from the persisted cache
+    finally:
+        conn2.close()
+
+    f1 = (tmp_path / "r1" / "cruzar-2026-05.md").read_text(encoding="utf-8")
+    f2 = (tmp_path / "r2" / "cruzar-2026-05.md").read_text(encoding="utf-8")
+    assert f1 == f2 and "Net Worth" in f1  # reproducible across runs, Summary present
