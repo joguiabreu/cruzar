@@ -22,7 +22,10 @@ accounts:
     currency: EUR
 """
 
-_CRUZAR_YAML = "base_currency: EUR\nllm_model: qwen3:8b\n"
+# The offline suite must never hit the network: disable the LLM tier so
+# pipeline.process stays rule-only (no Ollama calls). LLM behavior is covered
+# separately with injected fakes in test_llm_categorization.py.
+_CRUZAR_YAML = "base_currency: EUR\nllm:\n  enabled: false\n"
 
 _CATEGORIES_YAML = """\
 categories:

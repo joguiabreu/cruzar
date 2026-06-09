@@ -90,9 +90,12 @@ saves you the most time later.>
   - investment_flow_patterns: description rules identifying external
     contributions/withdrawals on investment accounts (e.g. employer
     contribution, external ACH deposit), used by ADR-14.
-- App config: /config/cruzar.yaml — base_currency (hardcoded EUR), llm_model
-  (Ollama model string, default `qwen3:8b`), fx provider settings.
-- Local LLM: Qwen 3 8B via Ollama. Config-driven and swappable; persisted
+- App config: /config/cruzar.yaml — base_currency (hardcoded EUR), llm settings
+  (Ollama model/host/min_confidence/timeout; default model `llama3.2:3b`), fx provider settings.
+- Local LLM via Ollama: a small, **non-reasoning** model. Default `llama3.2:3b`.
+  Categorization is a short labeling task, so a "thinking" model (e.g. `qwen3:8b`) is a
+  poor fit — it emits 1000+ reasoning tokens per call and times out on consumer hardware
+  (~14 tok/s); a non-thinking 3B answers in ~1s. Config-driven and swappable; persisted
   extractions can be cleared and rerun with `cruzar process --reextract`
   (ADR-12). Recommended: validate extraction quality on real redacted
   fixtures before relying on it.
@@ -325,7 +328,7 @@ Columns: Raw Description | LLM-Proposed Merchant | LLM-Proposed Category
   - Native (exact): per-account report sums equal `SUM(transactions.amount)` over the same account, period, account-class, and is_transfer filter.
   - Base (method-consistent): converted Summary figures equal the reconciliation script's own ADR-5 conversion. Asserts same method, not converted == native.
 - AC3: No content_hash appears twice in the DB.
-- AC4: The LLM is invoked only for (a) extraction when pdfplumber returns <50% of expected columns, and (b) categorization of merchants unmatched by any pattern, and only when no persisted prior result exists (ADR-12). Verified by log inspection.
+- AC4: The LLM is invoked only for (a) extraction when pdfplumber returns <50% of expected columns, and (b) categorization of merchants unmatched by any pattern, and only when no persisted prior result exists (ADR-12). Verified by log inspection. (Implementation note: clause (b) is implemented; clause (a) — LLM extraction fallback — is a later slice. This does not weaken the AC; both clauses remain required for full conformance.)
 - AC5: No secret material on disk outside the Keychain. Smoke test: `grep -rI "ya29\|refresh_token" .` finds nothing in project files AND a scan of the DB file finds no token-shaped values. (Necessary-not-sufficient.)
 - AC6: Each investment statement creates exactly one holdings_snapshot row per holding, dated period_end, linked via statement_id; existing rows never UPDATEd/DELETEd. Verified by grouping snapshots by statement_id.
 - AC7: Adding an account requires only one sources.yaml entry, (if format differs) one parser module, one test fixture. No core pipeline changes.
@@ -361,7 +364,10 @@ Columns: Raw Description | LLM-Proposed Merchant | LLM-Proposed Category
 - FX API down → use most recent cached rate, flag in report.
 - Network down → all DB writes atomic; complete or rollback.
 - New merchant unmatched + LLM low-confidence → "Needs Categorization", no auto-assign.
-- LLM proposes off-vocabulary category → treat as un-categorized; no silent new category.
+- Off-vocabulary category is prevented by construction: the LLM's `category` field is
+  grammar-constrained (JSON_SCHEMA) to a `Literal` of the controlled vocabulary, so it
+  can only pick a real category. A post-check still treats any non-vocab value as
+  un-categorized (defence in depth); no silent new category is ever created.
 - Merchant pattern removed between runs → affected `rule` rows cleared to `none`, reappear in "Needs Categorization"; `manual`/`llm` unaffected.
 - Rule added matching an `llm` row → rule wins (AC18); `manual` untouched.
 - Account first appears mid-history → "Tracking since YYYY-MM-DD" footer per account.

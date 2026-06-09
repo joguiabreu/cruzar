@@ -69,7 +69,19 @@ def process(
         seed_config(conn, config)
         _ingest_inbox(conn, Path(inbox_dir))
         transfers.detect(conn, config.transfer_patterns)  # normalize (ADR-15)
-        categorize.categorize(conn)
+        # LLM tier (ADR-13): build the Ollama client only when enabled; otherwise
+        # rule-only with zero calls. The import is local so offline runs never load it.
+        propose = None
+        if config.llm.enabled:
+            from cruzar.llm import ollama_categorizer
+
+            propose = ollama_categorizer(config.llm.model, config.llm.host, config.llm.timeout)
+        categorize.categorize(
+            conn,
+            propose=propose,
+            model=config.llm.model,
+            min_confidence=config.llm.min_confidence,
+        )
         # FX for Net Worth: offline → no fetch (cache/manual rates only).
         fetch = (
             None

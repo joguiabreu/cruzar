@@ -3,8 +3,9 @@
 One file per calendar month with activity: reports/cruzar-YYYY-MM.md. Reports are
 derived and regenerable (ADR-3); this is read-only w.r.t. the DB (AC13). Section 1
 shows up to the last 12 months (descending) as of each report's month, in EUR
-(ADR-16, FX at the persisted period-end rate), including Portfolio Δ (ADR-14).
-The Needs-Categorization section is a later slice.
+(ADR-16, FX at the persisted period-end rate), including Portfolio Δ (ADR-14). A
+conditional Needs-Categorization section lists this month's still-uncategorized
+transactions with the LLM's proposal (ADR-13), shown only when any exist.
 """
 
 from __future__ import annotations
@@ -203,6 +204,41 @@ def _investment_section(
     return lines
 
 
+def _needs_categorization_section(conn: sqlite3.Connection, year_month: str) -> list[str]:
+    """Section 5 (conditional, AC9): this month's cash transactions still un-categorized
+    (`merchant_source = 'none'`), one row per distinct description, with the LLM's
+    persisted proposal where one exists (a `needs_review` guess or blank). Rendered only
+    when non-empty."""
+    rows = conn.execute(
+        "SELECT DISTINCT t.description_raw AS description_raw, "
+        "l.proposed_merchant AS proposed_merchant, l.proposed_category AS proposed_category "
+        "FROM transactions t "
+        "JOIN statements s ON t.statement_id = s.id "
+        "JOIN accounts a ON s.account_id = a.id "
+        "LEFT JOIN llm_categorizations l ON l.description_raw = t.description_raw "
+        f"WHERE a.account_type IN ({','.join('?' * len(_CASH_TYPES))}) "
+        "AND t.merchant_source = 'none' AND t.is_transfer = 0 "
+        "AND substr(t.date, 1, 7) = ? "
+        "ORDER BY t.description_raw",
+        (*_CASH_TYPES, year_month),
+    ).fetchall()
+    if not rows:
+        return []
+    lines = [
+        "## Needs Categorization",
+        "",
+        "| Raw Description | LLM-Proposed Merchant | LLM-Proposed Category |",
+        "| --- | --- | --- |",
+    ]
+    for row in rows:
+        lines.append(
+            f"| {row['description_raw']} | {row['proposed_merchant'] or ''} "
+            f"| {row['proposed_category'] or ''} |"
+        )
+    lines.append("")
+    return lines
+
+
 def write_reports(
     conn: sqlite3.Connection,
     reports_dir: Path,
@@ -219,6 +255,7 @@ def write_reports(
         lines += _spending_section(conn, year_month)
         lines += _earning_section(conn, year_month)
         lines += _investment_section(conn, metrics.month_end(year_month), fetch=fetch)
+        lines += _needs_categorization_section(conn, year_month)
         (reports_dir / f"cruzar-{year_month}.md").write_text(
             "\n".join(lines), encoding="utf-8"
         )

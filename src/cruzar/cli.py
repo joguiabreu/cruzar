@@ -27,6 +27,10 @@ def _configure_logging() -> None:
     handler = logging.StreamHandler()
     handler.setFormatter(_CleanFormatter())
     logging.basicConfig(level=logging.INFO, handlers=[handler])
+    # The OpenAI/httpx clients log every request + retry at INFO; keep our output to
+    # Cruzar's own progress. Their warnings/errors still surface.
+    for noisy in ("httpx", "httpcore", "openai", "instructor"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
 def main(argv: list[str] | None = None) -> int:

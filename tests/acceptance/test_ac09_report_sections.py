@@ -67,8 +67,11 @@ def test_ac09_sections_present_in_order_with_investment_detail(tmp_path: Path) -
         report.write_reports(conn, tmp_path / "out", fetch=None)
         content = (tmp_path / "out" / "cruzar-2026-05.md").read_text(encoding="utf-8")
 
+        # 'X' (-5.00) is an uncategorized, non-transfer cash txn, so the optional
+        # Needs-Categorization section appears last (AC9).
         assert _section_order(content) == [
             "Summary", "Spending Detail", "Earning Detail", "Investment Detail",
+            "Needs Categorization",
         ]
         inv = content.split("## Investment Detail", 1)[1]
         assert "### Broker" in inv

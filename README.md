@@ -24,8 +24,9 @@ criteria), see [`docs/SPEC.md`](docs/SPEC.md). This README covers *how to run it
 - **Python 3.12**
 - **[uv](https://docs.astral.sh/uv/)** for dependency management
 - **[Ollama](https://ollama.com/)** running locally with the configured model
-  (`qwen3:8b` by default) — needed for LLM extraction/categorization fallbacks.
-  Pure-text statements with known parsers and known merchants don't call the LLM.
+  (`llama3.2:3b` by default) — needed for LLM categorization of merchants no rule
+  matched. Optional: set `llm.enabled: false` to run fully offline (rule-only).
+  Statements with known parsers and rule-matched merchants don't call the LLM.
 
 ## Install
 
@@ -133,6 +134,12 @@ generated Markdown (placeholder data shown):
 | Current Value |
 | --- |
 | 331.20 |
+
+## Needs Categorization
+
+| Raw Description | LLM-Proposed Merchant | LLM-Proposed Category |
+| --- | --- | --- |
+| POS 4521 UNKNOWN VENDOR | Maybe Cafe | Dining |
 ```
 
 **Summary** (Section 1) is in EUR: one row per month (last 12, newest first),
@@ -149,7 +156,10 @@ a EUR Grand Total. The **Spending Detail** and
 **Earning Detail** sections are native-currency and itemise that month's
 cash outflows and inflows respectively (Earning Detail's rows sum to the Summary's
 Earned); transfers between your own accounts are excluded — see
-[Transfers](#transfers).
+[Transfers](#transfers). **Needs Categorization** appears only when this month has
+cash transactions no merchant pattern matched and the LLM didn't confidently place;
+it shows the raw description and the LLM's (unapplied) guess for you to act on — see
+[Categorization](#categorization).
 
 ## Account setup
 
@@ -207,21 +217,78 @@ the source of truth at runtime; the YAML files are editable inputs (ADR-3).
 | ---------------------- | -------------------------------------------------------- |
 | `sources.yaml`         | Account allowlist (gitignored — your real accounts).     |
 | `sources.yaml.example` | Template to copy from.                                   |
-| `cruzar.yaml`          | App config: `base_currency` (EUR), `llm_model` (Ollama), `fx`. |
+| `cruzar.yaml`          | App config: `base_currency` (EUR), `llm` (Ollama categorization), `fx`. |
 | `categories.yaml`      | Controlled category vocabulary.                          |
 | `merchants.yaml`       | Merchant names + match patterns for categorization.      |
 | `flows.yaml`           | `transfer_patterns` (transfer detection) + `investment_flow_patterns` (external contributions, ADR-14). |
 | `fx_rates.yaml`        | *Optional* hand-supplied FX rates (see FX rates below).  |
 
-`config/cruzar.yaml`:
+`config/cruzar.yaml` — the app-wide knobs:
 
 ```yaml
 base_currency: EUR
-llm_model: qwen3:8b
+llm:
+  enabled: true                 # false → rule-only, no LLM calls (fully offline)
+  model: llama3.2:3b            # any Ollama model string (see note below)
+  host: http://localhost:11434  # where Ollama listens
+  min_confidence: 0.7           # below this, a proposal is shown but not auto-assigned
+  timeout_seconds: 60           # per request; a too-slow model is skipped, run continues
 fx:
-  offline: false        # true → never fetch; use only cached/manual rates
-  timeout_seconds: 10
+  offline: false                # true → never fetch; use only cached/manual rates
+  timeout_seconds: 10           # FX HTTP request timeout
+  # access_key:                 # optional exchangerate.host key; without it, ECB is used
 ```
+
+### Every setting you can change
+
+| Setting | What it does | Change it when… |
+| --- | --- | --- |
+| `base_currency` | Report/base currency (EUR for v1). | Don't — v1 is EUR-only (ADR-5). |
+| `llm.enabled` | Turns the LLM categorization tier on/off. | You want a fully offline, rule-only run, or Ollama isn't installed. |
+| `llm.model` | Which **Ollama** model labels merchants. Must be pulled first (`ollama pull <model>`). | You want faster/better labeling — **use a small non-thinking model** like `llama3.2:3b`; avoid reasoning models (e.g. `qwen3`), which emit huge `<think>` blocks and time out. |
+| `llm.host` | Ollama's address. | Ollama runs on another port/host. |
+| `llm.min_confidence` | Threshold to auto-apply a proposal; below it the guess goes to *Needs Categorization* unapplied. | Too much lands in Needs-Categorization → lower toward `0.6`; too many wrong auto-assigns → raise. |
+| `llm.timeout_seconds` | Per-request timeout. After 3 consecutive timeouts the run gives up the LLM pass with a hint. | Your model is slow but you want to wait longer (or you switched to a fast model and want it tighter). |
+| `fx.offline` | `true` → never hit the network for FX; use cached/manual rates only. | You have no internet or supply rates by hand. |
+| `fx.timeout_seconds` | FX HTTP request timeout. | Flaky network. |
+| `fx.access_key` | Optional exchangerate.host key (else ECB is used). | You have a paid FX provider key. |
+
+> **Model note (learned the hard way):** Cruzar asks the LLM only to *label* a short
+> description, so a small, fast, **non-reasoning** model is ideal. `qwen3:8b` and other
+> "thinking" models generate 1000+ reasoning tokens per call and blow past the timeout
+> on consumer hardware; `llama3.2:3b` answers in ~1s. Install with `ollama pull llama3.2:3b`.
+> After changing the model, clear cached proposals so it re-runs (they're never recomputed —
+> ADR-12): `sqlite3 data/cruzar.db "DELETE FROM llm_categorizations; UPDATE transactions SET merchant_id=NULL, merchant_source='none' WHERE merchant_source='llm';"`
+
+The other editable inputs — accounts (`sources.yaml`), categories (`categories.yaml`),
+merchant rules (`merchants.yaml`), and flow patterns (`flows.yaml`) — are covered in
+[Account setup](#account-setup), [Categorization](#categorization), and [Transfers](#transfers).
+
+## Categorization
+
+Each transaction gets a merchant + category by **authority** (ADR-13): `manual >
+rule > llm`.
+
+1. **Rule** — a transaction whose description matches a `merchant_patterns` entry in
+   `config/merchants.yaml` is assigned that merchant (re-evaluated every run).
+2. **LLM** — for descriptions no rule matched, a local LLM (Ollama) proposes a
+   merchant + category + confidence. A **confident, in-vocabulary** proposal is
+   applied (`merchant_source = 'llm'`); a **low-confidence or off-vocabulary** one is
+   kept as a suggestion and listed in the report's **Needs Categorization** section,
+   never auto-assigned. A matching rule added later overrides an LLM assignment.
+3. **Manual** — frozen; set it yourself (CLI is a later slice). Never overwritten.
+
+Proposals are **persisted and never recomputed** (ADR-12): a re-run over unchanged
+data makes **zero** LLM calls. The LLM is **optional** — set `llm.enabled: false` for
+a fully offline, rule-only run. And it **degrades gracefully**: if Ollama isn't
+running, the report still generates (the numbers are all there); affected lines stay
+uncategorized in Needs Categorization and are **retried automatically** on the next
+`cruzar process` once the model is back. Cruzar never asks the LLM to do arithmetic —
+it only proposes labels (ADR-1/2).
+
+> **Setup:** install [Ollama](https://ollama.com) and pull the model
+> (`ollama pull llama3.2:3b`). Cruzar talks to it locally at
+> `http://localhost:11434`; nothing leaves your machine.
 
 ## FX rates
 
