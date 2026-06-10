@@ -1,5 +1,6 @@
-"""Cruzar CLI. This slice implements `cruzar process` (manual ingest → persist →
-report). `cruzar fetch` / `cruzar report` are later slices.
+"""Cruzar CLI. Implements `cruzar process` (manual ingest → persist → report) and
+`cruzar report` (read-only re-render of reports from the existing DB). `cruzar fetch`
+(Gmail) is a later slice.
 """
 
 from __future__ import annotations
@@ -8,7 +9,7 @@ import argparse
 import logging
 from pathlib import Path
 
-from cruzar.pipeline import process
+from cruzar.pipeline import process, report_only
 
 _ROOT = Path.cwd()
 
@@ -38,12 +39,19 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="cruzar")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("process", help="ingest /data/inbox, persist, write reports")
+    sub.add_parser("report", help="re-render reports from the existing DB (read-only)")
 
     args = parser.parse_args(argv)
     if args.command == "process":
         process(
             db_path=_ROOT / "data" / "cruzar.db",
             inbox_dir=_ROOT / "data" / "inbox",
+            config_dir=_ROOT / "config",
+            reports_dir=_ROOT / "reports",
+        )
+    elif args.command == "report":
+        report_only(
+            db_path=_ROOT / "data" / "cruzar.db",
             config_dir=_ROOT / "config",
             reports_dir=_ROOT / "reports",
         )

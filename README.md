@@ -99,6 +99,22 @@ A file that fails to parse is logged as an error, marked `parse_failed`, and
 writes nothing partial; a PDF in a folder with no matching account is logged as a
 warning and marked `unresolved_account` (logged, never guessed).
 
+### `cruzar report`
+
+Re-renders the monthly reports from the existing database, without ingesting
+anything:
+
+```bash
+uv run cruzar report
+```
+
+Because SQLite is the source of truth and reports are derived (ADR-3), you can
+regenerate them any time — after a hand correction, or if you deleted the
+`reports/` folder. It is **read-only**: it never writes to the DB (SPEC AC13),
+makes no network calls, and uses only FX rates already cached by a prior
+`process` (a month-end rate that isn't cached renders as `n/a`). Fetching rates is
+`process`'s job.
+
 ### What a report looks like
 
 Reports land at `reports/cruzar-YYYY-MM.md`, one per calendar month. The

@@ -105,6 +105,28 @@ def process(
         conn.close()
 
 
+def report_only(
+    db_path: str | Path, config_dir: str | Path, reports_dir: str | Path
+) -> None:
+    """Re-render the monthly reports from the existing DB — the `report` pipeline stage
+    on its own (ADR-3/4). Read-only w.r.t. the DB (AC13): no ingest, normalize,
+    categorize, or LLM, and no FX fetch (`fetch=None`) — a fetch would persist a rate.
+    Converts using cached/manual `fx_rates`, rendering `n/a` for any absent month-end
+    rate; fetching is `process`'s job. Writes only to `reports/`."""
+    config = load_config(config_dir)
+    conn = connect(db_path)
+    try:
+        init_schema(conn)  # idempotent; a no-op (no byte change) on an up-to-date DB
+        report.write_reports(
+            conn,
+            Path(reports_dir),
+            investment_flow_patterns=config.investment_flow_patterns,
+            fetch=None,
+        )
+    finally:
+        conn.close()
+
+
 def ingest_inbox(
     conn: sqlite3.Connection, inbox_dir: Path, *, extractor: LlmExtractor | None = None
 ) -> None:
