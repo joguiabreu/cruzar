@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from cruzar import categorize, conflicts, fx, report, transfers
@@ -123,6 +123,43 @@ def report_only(
             investment_flow_patterns=config.investment_flow_patterns,
             fetch=None,
         )
+    finally:
+        conn.close()
+
+
+def ask(db_path: str | Path, config_dir: str | Path, question: str, *, today: date | None = None) -> str:
+    """Answer a free-form question about the data (ADR-17). The local LLM maps the
+    question to a bounded analytics query; Python computes the figure (ADR-1). Read-only,
+    cached FX only (no fetch), like `report`. Returns a plain-text answer."""
+    from datetime import date as _date
+
+    from cruzar import analytics
+
+    config = load_config(config_dir)
+    if not config.llm.enabled:
+        return (
+            "The assistant needs the local LLM enabled — set `llm.enabled: true` in "
+            "config/cruzar.yaml and make sure Ollama is running."
+        )
+    conn = connect(db_path)
+    try:
+        init_schema(conn)
+        categories = [r["name"] for r in conn.execute("SELECT name FROM categories ORDER BY name")]
+        from cruzar.llm import ollama_query_planner
+
+        planner = ollama_query_planner(
+            config.llm.model, config.llm.host, config.llm.timeout, categories
+        )
+        try:
+            return analytics.answer(
+                conn, question,
+                planner=planner,
+                today=today or _date.today(),
+                fetch=None,  # read-only: cached/manual rates only
+                investment_flow_patterns=config.investment_flow_patterns,
+            )
+        except LlmError as exc:
+            return f"The assistant couldn't reach the local LLM ({exc}). Is Ollama running?"
     finally:
         conn.close()
 

@@ -269,10 +269,48 @@ def spending_by_category(
     Same filter as ``spent`` (cash accounts, amount < 0, not transfer, not superseded),
     joined to ``merchants.category`` — spending with no matched merchant is bucketed as
     ``Uncategorized`` so nothing is dropped and the totals sum to ``spent(ym)``. Summed
-    per (category, currency) then converted to EUR at the month-end rate (ADR-5)."""
+    per (category, currency) then converted to EUR at the month-end rate (ADR-5),
+    most-spent first."""
+    return _group_spend(conn, ym, "COALESCE(m.category, 'Uncategorized')", fetch=fetch)
+
+
+def spending_by_merchant(
+    conn: sqlite3.Connection, ym: str, *, fetch: Fetcher | None
+) -> list[tuple[str, Decimal]]:
+    """This month's cash spending grouped by matched merchant name, in EUR (most-spent
+    first). Same filter/method as ``spending_by_category``; spending with no matched
+    merchant is bucketed as ``Uncategorized``."""
+    return _group_spend(conn, ym, "COALESCE(m.name, 'Uncategorized')", fetch=fetch)
+
+
+def income_by_source(
+    conn: sqlite3.Connection, ym: str, *, fetch: Fetcher | None
+) -> list[tuple[str, Decimal]]:
+    """This month's cash income grouped by source, in EUR (most-earned first). Source =
+    matched merchant name else the raw description (the Earning Detail convention). Same
+    filter as ``earned``; the totals sum to ``earned(ym)``."""
     rows = conn.execute(
         "SELECT a.currency AS currency, t.amount AS amount, "
-        "COALESCE(m.category, 'Uncategorized') AS category FROM transactions t "
+        "COALESCE(m.name, t.description_raw) AS source FROM transactions t "
+        "JOIN statements s ON t.statement_id = s.id "
+        "JOIN accounts a ON s.account_id = a.id "
+        "LEFT JOIN merchants m ON t.merchant_id = m.id "
+        f"WHERE a.account_type IN ({','.join('?' * len(_CASH_TYPES))}) "
+        "AND t.is_transfer = 0 AND t.superseded = 0 "
+        "AND t.amount NOT LIKE '-%' AND t.amount != '0.00' "
+        "AND substr(t.date, 1, 7) = ?",
+        (*_CASH_TYPES, ym),
+    ).fetchall()
+    totals = _convert_grouped(conn, rows, key="source", ym=ym, fetch=fetch)
+    return sorted(totals.items(), key=lambda kv: (-kv[1], kv[0]))  # most-earned first
+
+
+def _group_spend(
+    conn: sqlite3.Connection, ym: str, key_expr: str, *, fetch: Fetcher | None
+) -> list[tuple[str, Decimal]]:
+    rows = conn.execute(
+        f"SELECT a.currency AS currency, t.amount AS amount, {key_expr} AS grp "
+        "FROM transactions t "
         "JOIN statements s ON t.statement_id = s.id "
         "JOIN accounts a ON s.account_id = a.id "
         "LEFT JOIN merchants m ON t.merchant_id = m.id "
@@ -281,15 +319,28 @@ def spending_by_category(
         "AND substr(t.date, 1, 7) = ?",
         (*_CASH_TYPES, ym),
     ).fetchall()
-    by_cat_cur: dict[tuple[str, str], Decimal] = defaultdict(lambda: Decimal(0))
+    totals = _convert_grouped(conn, rows, key="grp", ym=ym, fetch=fetch)
+    return sorted(totals.items(), key=lambda kv: (kv[1], kv[0]))  # most-spent first
+
+
+def _convert_grouped(
+    conn: sqlite3.Connection,
+    rows: list[sqlite3.Row],
+    *,
+    key: str,
+    ym: str,
+    fetch: Fetcher | None,
+) -> dict[str, Decimal]:
+    """Sum native amounts per (group, currency), then convert each to EUR at the
+    month-end rate (ADR-5) and total per group."""
+    by_grp_cur: dict[tuple[str, str], Decimal] = defaultdict(lambda: Decimal(0))
     for row in rows:
-        by_cat_cur[(row["category"], row["currency"])] += Decimal(row["amount"])
+        by_grp_cur[(row[key], row["currency"])] += Decimal(row["amount"])
     end = month_end(ym)
     totals: dict[str, Decimal] = defaultdict(lambda: Decimal(0))
-    for (category, currency), amount in by_cat_cur.items():
-        totals[category] += fx.convert(conn, amount, currency, end, fetch=fetch)
-    # Ascending amount = most negative (most spent) first; tie-break by name for stability.
-    return sorted(totals.items(), key=lambda kv: (kv[1], kv[0]))
+    for (grp, currency), amount in by_grp_cur.items():
+        totals[grp] += fx.convert(conn, amount, currency, end, fetch=fetch)
+    return totals
 
 
 def _flow(

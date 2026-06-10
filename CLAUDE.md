@@ -87,6 +87,12 @@ product behavior, `docs/SPEC.md` wins; ask before deviating from either.
 - **Update `README.md` as part of every plan implementation.** A slice isn't done
   until `README.md` reflects any new/changed command, config file, or
   user-visible behavior it introduced. Treat a stale README like a failing test.
+- **Explainer/design docs (under `docs/design/`) are written or updated ONLY when I
+  explicitly ask for them — never proactively, never as an unrequested part of a
+  slice.** (This is separate from `README.md` and `SPEC.md` updates, which stay
+  mandatory parts of a slice as above.) When I do ask, dark-mode is not required —
+  these are committed Markdown. Keep them learning-oriented: diagrams and snippets
+  welcome.
 - **Don't widen scope.** If you spot a needed change outside the task, write it
   in the plan and ask — don't silently do it.
 - If a change would touch an **ADR or an AC, stop and ask.** ADRs are decisions,

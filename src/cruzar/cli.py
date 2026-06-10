@@ -9,7 +9,7 @@ import argparse
 import logging
 from pathlib import Path
 
-from cruzar.pipeline import process, report_only
+from cruzar.pipeline import ask, process, report_only
 
 _ROOT = Path.cwd()
 
@@ -40,6 +40,10 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("process", help="ingest /data/inbox, persist, write reports")
     sub.add_parser("report", help="re-render reports from the existing DB (read-only)")
+    ask_parser = sub.add_parser(
+        "ask", help="ask a free-form question about your data (local LLM, read-only)"
+    )
+    ask_parser.add_argument("question", help="e.g. \"how much did I spend on Dining last 6 months?\"")
 
     args = parser.parse_args(argv)
     if args.command == "process":
@@ -55,6 +59,8 @@ def main(argv: list[str] | None = None) -> int:
             config_dir=_ROOT / "config",
             reports_dir=_ROOT / "reports",
         )
+    elif args.command == "ask":
+        print(ask(_ROOT / "data" / "cruzar.db", _ROOT / "config", args.question))
     return 0
 
 

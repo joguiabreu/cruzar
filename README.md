@@ -115,6 +115,26 @@ makes no network calls, and uses only FX rates already cached by a prior
 `process` (a month-end rate that isn't cached renders as `n/a`). Fetching rates is
 `process`'s job.
 
+### `cruzar ask`
+
+Ask a free-form question about your data:
+
+```bash
+uv run cruzar ask "how much did I spend on Dining in the last 6 months?"
+uv run cruzar ask "what was my main source of spending last year?"
+uv run cruzar ask "how have my investments been going?"
+```
+
+The **local LLM only translates your question into a query** (which metric, which
+category, which time range) — it never does the arithmetic. The numbers are computed
+in Python/`Decimal` from the same source the reports use, so answers are exact and
+reconcile with them (the model can't hallucinate a figure). It needs Ollama running
+(same `llm:` config as categorization), is **read-only**, and uses cached FX. It
+answers about spending (total / by category / by merchant), income (total / by source),
+net worth (now or as a trend), and investment performance over a time range; anything
+outside that gets an honest "I can't answer that" rather than a guess. See
+[design notes](docs/design/query_planner.md) for how it works.
+
 ### What a report looks like
 
 Reports land at `reports/cruzar-YYYY-MM.md`, one per calendar month. The

@@ -335,6 +335,16 @@ Columns: Date | Account | Description | Amount (kept) | Amount (restated)
   2. Account-pair matching: an opposite-signed transaction of the same absolute amount on another tracked account within ±3 calendar days → mark BOTH `is_transfer = true` (symmetric).
      Step 3 (review appendix) deferred to v1.1. Residual: uncaught transfers leak into Earned/Spent — accepted.
 - ADR-16: **Net Worth** at month-end M = base-currency sum, over accounts not closed as of M, of `statements.closing_balance` (latest statement ≤ M per account) + Σ `holdings_snapshot.value` (latest snapshot ≤ M). Closed accounts are excluded from the most-recent row but remain in historical rows preceding their closed_at.
+- ADR-17: **Conversational queries (`cruzar ask`) — the LLM plans, Python computes.** A free-form question is mapped by the local LLM to ONE entry in a bounded, typed query catalog (`QuerySpec`) — it selects a query and fills parameters (period, category, top-N); it never sums, converts, or authors a figure (ADR-1 stands). Python executes the query over `metrics`/`Decimal` and renders the answer from the computed result, so answers reconcile with the reports. Local model only (privacy); read-only (cached FX, like `report`). An unmappable question returns an honest capability message — never a fabricated answer; it is a reader, not an advisor. The catalog is the stable port: `cruzar ask` is the first adapter, an MCP server can be another over the same catalog. Not gated by an AC (a feature beyond the v1 spec scope); offline tests inject a fake planner, a live Ollama run is the gate.
+
+### Conversational queries (`cruzar ask`)
+
+`cruzar ask "<question>"` answers questions like "how much did I spend on Dining in
+the last 6 months?", "what was my main source of spending last year?", "how have my
+investments been going?". v1 catalog: total/by-category/by-merchant spending, total
+income / income by source, net worth (point-in-time or monthly trend), and investment
+performance (range Portfolio Δ) — each over a relative or explicit period. See ADR-17;
+design notes in `docs/design/query_planner.md`.
 
 ## Acceptance criteria
 

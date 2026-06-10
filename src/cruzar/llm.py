@@ -10,6 +10,7 @@ the affected lines show in Needs-Categorization and retry next run).
 
 from __future__ import annotations
 
+from cruzar.analytics import QueryPlanner, QuerySpec
 from cruzar.categorize import LlmCategorizer, LlmError, LlmTimeout, LlmUnavailable, Proposal
 from cruzar.extract import LlmExtractor, to_parsed_statement
 from cruzar.models import ParsedStatement
@@ -198,3 +199,71 @@ def ollama_extractor(model: str, host: str, timeout: float = 60.0) -> LlmExtract
             )
 
     return _OllamaExtractor()
+
+
+def ollama_query_planner(
+    model: str, host: str, timeout: float, categories: list[str]
+) -> QueryPlanner:
+    """Build an Ollama-backed query planner (ADR-17, AC-free feature). Maps a free-form
+    question to a schema-constrained ``QuerySpec`` (the analytics catalog) — it selects a
+    query and its parameters; it never computes (ADR-1). ``categories`` (the controlled
+    vocabulary) is given to the model so question words map to real category names. A
+    transport failure wraps as ``LlmError``; an unmappable question returns ``Unsupported``."""
+    from datetime import date
+
+    import instructor
+    from openai import APIConnectionError, APITimeoutError, OpenAI
+    from pydantic import BaseModel
+    from tenacity import Retrying, retry_if_not_exception_type, stop_after_attempt
+
+    class _Plan(BaseModel):
+        query: QuerySpec  # the discriminated union — instructor constrains to it
+
+    client = instructor.from_openai(
+        OpenAI(base_url=f"{host.rstrip('/')}/v1", api_key="ollama", max_retries=0, timeout=timeout),
+        mode=instructor.Mode.JSON_SCHEMA,
+    )
+    reprompt = Retrying(
+        stop=stop_after_attempt(2),
+        retry=retry_if_not_exception_type(APIConnectionError),
+        reraise=True,
+    )
+    vocab = ", ".join(categories) if categories else "(none configured)"
+
+    class _OllamaQueryPlanner:
+        def plan(self, question: str, today: date) -> QuerySpec:
+            system = (
+                "You translate a personal-finance question into ONE structured query for a "
+                "local tool that does all the math itself — you only choose the query and its "
+                "parameters, you NEVER compute or guess a number. Today is "
+                f"{today.isoformat()}.\n"
+                "PERIOD: prefer a RELATIVE descriptor — set the period's last_n_months (e.g. 6), "
+                "last_n_years (e.g. 1 for 'last year'), year (e.g. 2025), or this_year. Only use "
+                "explicit start/end as 'YYYY-MM' (year-month, no day), start <= end. Never compute "
+                "the bounds yourself.\n"
+                "CATEGORIES: for a spend_by_category query, set `categories` to a LIST of the "
+                f"relevant categories chosen ONLY from this exact list: {vocab}. Map everyday "
+                "words to one or MORE of them — e.g. 'food' -> ['Dining', 'Groceries'], 'eating "
+                "out' -> ['Dining']. Use the exact spellings above; never invent a category.\n"
+                "If the question doesn't fit any available query, return the 'unsupported' query "
+                "with a brief reason."
+            )
+            try:
+                result = client.chat.completions.create(
+                    model=model,
+                    response_model=_Plan,
+                    max_retries=reprompt,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": question},
+                    ],
+                )
+            except APITimeoutError as exc:
+                raise LlmTimeout(f"query planning timed out after {timeout:.0f}s") from exc
+            except APIConnectionError as exc:
+                raise LlmUnavailable(f"cannot reach Ollama at {host}") from exc
+            except Exception as exc:  # schema-validation or other failure
+                raise LlmError(f"query planning failed: {exc}") from exc
+            return result.query
+
+    return _OllamaQueryPlanner()
