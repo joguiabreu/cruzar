@@ -14,6 +14,19 @@ from typing import Any
 
 _ROW_TOLERANCE = 3.0  # vertical clustering tolerance (points)
 
+
+class ExtractionFallback(Exception):
+    """Raised by a parser when pdfplumber recovers <50% of the expected columns
+    (AC4a) — the structured layout is too degraded to trust, but the page text is
+    intact. Carries that raw ``text`` so the pipeline can hand it to the LLM
+    extractor (ADR-2). Distinct from a parser's own parse error (which means
+    fail-loud `parse_failed`): this is the off-ramp to LLM extraction, not a failure.
+    """
+
+    def __init__(self, text: str) -> None:
+        super().__init__("structured extraction recovered <50% of columns")
+        self.text = text
+
 _PT_MONTHS = {
     "janeiro": 1,
     "fevereiro": 2,

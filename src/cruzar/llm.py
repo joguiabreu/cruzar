@@ -11,6 +11,21 @@ the affected lines show in Needs-Categorization and retry next run).
 from __future__ import annotations
 
 from cruzar.categorize import LlmCategorizer, LlmError, LlmTimeout, LlmUnavailable, Proposal
+from cruzar.extract import LlmExtractor, to_parsed_statement
+from cruzar.models import ParsedStatement
+
+_EXTRACT_SYSTEM = (
+    "You transcribe a bank statement that automated parsing could not read into "
+    "structured JSON, for a personal-finance tool. Copy the PRINTED values exactly — "
+    "do NOT calculate, sum, convert currencies, or infer anything not on the page "
+    "(ADR-1). For each transaction line emit: date (as YYYY-MM-DD), description (the "
+    "raw text), amount (the printed number as a plain decimal with a '.' decimal "
+    "separator and NO thousands separators, e.g. 1234.56), and direction — 'debit' "
+    "for money leaving the account, 'credit' for money arriving. Do not apply a sign; "
+    "report the magnitude and the direction. Also emit the statement currency (ISO "
+    "4217), period_start, period_end (YYYY-MM-DD), and the printed closing balance "
+    "(signed if negative). Skip header/footer/summary rows that are not transactions."
+)
 
 _SYSTEM = (
     "You label a single bank-statement transaction for a personal-finance tool. "
@@ -117,3 +132,69 @@ def ollama_categorizer(model: str, host: str, timeout: float = 60.0) -> LlmCateg
             return Proposal(str(data["merchant"]), str(data["category"]), float(data["confidence"]))
 
     return _OllamaCategorizer()
+
+
+def ollama_extractor(model: str, host: str, timeout: float = 60.0) -> LlmExtractor:
+    """Build an Ollama-backed statement extractor (ADR-2, AC4a). Same constrained-JSON
+    client as the categorizer; the model transcribes printed values and Python owns the
+    math (sign, Decimal) via ``extract.to_parsed_statement``. Transport/validation
+    failures wrap as ``LlmError`` so the pipeline marks the file ``extraction_failed``
+    and writes nothing (fail loud — extraction is source parsing)."""
+    from typing import Literal
+
+    import instructor
+    from openai import APIConnectionError, APITimeoutError, OpenAI
+    from pydantic import BaseModel
+    from tenacity import Retrying, retry_if_not_exception_type, stop_after_attempt
+
+    class _Line(BaseModel):
+        date: str
+        description: str
+        amount: str
+        direction: Literal["debit", "credit"]
+
+    class _Statement(BaseModel):
+        currency: str
+        period_start: str
+        period_end: str
+        closing_balance: str
+        transactions: list[_Line]
+
+    client = instructor.from_openai(
+        OpenAI(base_url=f"{host.rstrip('/')}/v1", api_key="ollama", max_retries=0, timeout=timeout),
+        mode=instructor.Mode.JSON_SCHEMA,
+    )
+    reprompt = Retrying(
+        stop=stop_after_attempt(2),  # malformed twice => extraction_failed (AC4a / SPEC)
+        retry=retry_if_not_exception_type(APIConnectionError),
+        reraise=True,
+    )
+
+    class _OllamaExtractor:
+        def extract(self, text: str) -> ParsedStatement:
+            try:
+                result = client.chat.completions.create(
+                    model=model,
+                    response_model=_Statement,
+                    max_retries=reprompt,
+                    messages=[
+                        {"role": "system", "content": _EXTRACT_SYSTEM},
+                        {"role": "user", "content": f"Statement text:\n{text}"},
+                    ],
+                )
+            except APITimeoutError as exc:
+                raise LlmTimeout(f"LLM extraction timed out after {timeout:.0f}s") from exc
+            except APIConnectionError as exc:
+                raise LlmUnavailable(f"cannot reach Ollama at {host}") from exc
+            except Exception as exc:  # schema-validation or other failure
+                raise LlmError(f"extraction failed: {exc}") from exc
+            data = result.model_dump()
+            return to_parsed_statement(
+                currency=str(data["currency"]),
+                period_start=str(data["period_start"]),
+                period_end=str(data["period_end"]),
+                closing_balance=str(data["closing_balance"]),
+                lines=result.transactions,
+            )
+
+    return _OllamaExtractor()

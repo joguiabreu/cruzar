@@ -68,7 +68,11 @@ Runs the full manual-ingest pipeline. It:
    [Account setup](#account-setup)).
 4. Deduplicates by file hash, statement period, and transaction content hash —
    so re-running over unchanged files is a no-op and makes **zero LLM calls**.
-5. Parses and persists each statement.
+5. Parses and persists each statement. If a statement's layout defeats the
+   structured parser (fewer than half its rows yield a clean amount column), Cruzar
+   asks the **local LLM to read it** from the raw text instead — needs Ollama
+   running; without it (or if the model returns unusable output) the file is flagged
+   `extraction_failed` and retried on the next run.
 6. **Flags transfers** (`is_transfer`) so inter-account moves don't count as
    spending — see [Transfers](#transfers).
 7. **Flags restatements** so a corrected line re-listed on a later statement isn't

@@ -18,7 +18,11 @@ from typing import Any
 import pdfplumber
 
 from cruzar.models import ParsedStatement, ParsedTransaction
-from cruzar.parsers._common import cluster_rows, row_text
+from cruzar.parsers._common import ExtractionFallback, cluster_rows, row_text
+
+# AC4a: if fewer than this fraction of candidate transaction rows resolve an amount
+# column, the layout is too degraded to trust the structured parse → LLM fallback.
+_MIN_COLUMN_RESOLUTION = 0.5
 
 # Column boundaries by token-center x (derived from the header positions
 # DEBITO~370, CREDITO~445, SALDO~542). Description/amount split at x0 >= 340.
@@ -83,6 +87,26 @@ def parse(pdf_path: str | Path) -> ParsedStatement:
             break
     if start_idx is None or end_idx is None or end_idx <= start_idx:
         raise ActivoBankParseError("could not bracket SALDO INICIAL .. SALDO FINAL")
+
+    # AC4a degradation gate: of the candidate transaction rows (those carrying a
+    # date-column token), how many resolve an amount in a DEBITO/CREDITO column? A
+    # clean statement resolves ~all; a degenerate layout ~none. <50% (with at least
+    # one candidate) means pdfplumber lost the columns → hand the raw text to the LLM
+    # extractor instead of raising. Checked BEFORE closing_balance so a degraded
+    # statement falls back rather than tripping a generic "missing SALDO FINAL".
+    candidates = [
+        row for row in rows[start_idx + 1 : end_idx]
+        if any(w["x0"] < _DATE_X0_MAX for w in row)
+    ]
+    if candidates:
+        resolved = sum(
+            1
+            for row in candidates
+            if _column_amount(row, "debit") is not None
+            or _column_amount(row, "credit") is not None
+        )
+        if resolved / len(candidates) < _MIN_COLUMN_RESOLUTION:
+            raise ExtractionFallback(all_text)
 
     closing_balance = _column_amount(rows[end_idx], "saldo")
     if closing_balance is None:

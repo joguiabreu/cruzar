@@ -15,9 +15,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from cruzar import categorize, conflicts, fx, report, transfers
+from cruzar.categorize import LlmError
 from cruzar.config import load_config
 from cruzar.db import connect, init_schema
+from cruzar.extract import LlmExtractor
 from cruzar.parsers import get_parser
+from cruzar.parsers._common import ExtractionFallback
 from cruzar.parsers.activobank import ActivoBankParseError
 from cruzar.persist import persist_statement, seed_config
 
@@ -67,16 +70,19 @@ def process(
     try:
         init_schema(conn)
         seed_config(conn, config)
-        _ingest_inbox(conn, Path(inbox_dir))
-        transfers.detect(conn, config.transfer_patterns)  # normalize (ADR-15)
-        conflicts.detect(conn)  # flag restated transactions (normalize, ADR-8)
-        # LLM tier (ADR-13): build the Ollama client only when enabled; otherwise
-        # rule-only with zero calls. The import is local so offline runs never load it.
+        # LLM tier (ADR-2/13): build the Ollama clients only when enabled; otherwise
+        # rule-only with zero calls and no extraction fallback. Imports are local so
+        # offline runs never load instructor/openai.
         propose = None
+        extractor: LlmExtractor | None = None
         if config.llm.enabled:
-            from cruzar.llm import ollama_categorizer
+            from cruzar.llm import ollama_categorizer, ollama_extractor
 
             propose = ollama_categorizer(config.llm.model, config.llm.host, config.llm.timeout)
+            extractor = ollama_extractor(config.llm.model, config.llm.host, config.llm.timeout)
+        ingest_inbox(conn, Path(inbox_dir), extractor=extractor)
+        transfers.detect(conn, config.transfer_patterns)  # normalize (ADR-15)
+        conflicts.detect(conn)  # flag restated transactions (normalize, ADR-8)
         categorize.categorize(
             conn,
             propose=propose,
@@ -99,7 +105,9 @@ def process(
         conn.close()
 
 
-def _ingest_inbox(conn: sqlite3.Connection, inbox_dir: Path) -> None:
+def ingest_inbox(
+    conn: sqlite3.Connection, inbox_dir: Path, *, extractor: LlmExtractor | None = None
+) -> None:
     pdfs = sorted(inbox_dir.rglob("*.pdf"))
     if not pdfs:
         logger.info("no PDFs found in %s", inbox_dir)
@@ -131,6 +139,26 @@ def _ingest_inbox(conn: sqlite3.Connection, inbox_dir: Path) -> None:
         try:
             parser = get_parser(account["institution"])
             statement = parser(pdf_path)
+        except ExtractionFallback as fallback:
+            # AC4a: structured parse recovered <50% of columns. Hand the raw text to
+            # the LLM extractor (ADR-2). No extractor (LLM disabled) or an unusable
+            # result → extraction_failed, write nothing (fail loud), retried next run.
+            if extractor is None:
+                logger.error("layout too degraded and LLM disabled, skipping %s", pdf_path.name)
+                _record_file(conn, file_hash, pdf_path.name, "extraction_failed", None)
+                conn.commit()
+                failed += 1
+                continue
+            try:
+                statement = extractor.extract(fallback.text)
+                logger.info("LLM extraction fallback for %s", pdf_path.name)
+            except LlmError:
+                logger.error("LLM extraction failed, skipping %s", pdf_path.name)
+                conn.rollback()
+                _record_file(conn, file_hash, pdf_path.name, "extraction_failed", None)
+                conn.commit()
+                failed += 1
+                continue
         except (ActivoBankParseError, ValueError):
             logger.error("parse failed, skipping %s", pdf_path.name)
             conn.rollback()
