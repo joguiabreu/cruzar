@@ -9,7 +9,7 @@ base_currency: EUR
 # run still completes; affected lines stay uncategorized and retry next run.
 llm:
   enabled: true
-  model: llama3.2:3b # any Ollama model string
+  model: qwen3.5:4b # any Ollama model string
   host: http://localhost:11434
   min_confidence: 0.7 # below this, a proposal is shown but not auto-assigned
   timeout_seconds: 60 # per request; if Ollama is down the run fails fast and skips

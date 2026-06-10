@@ -463,6 +463,20 @@ an acceptance criterion in `docs/SPEC.md`. Before any change is "done":
 uv run ruff check . && uv run pyright && uv run pytest
 ```
 
+### Measuring categorization accuracy
+
+The test suite is offline (it uses fake LLMs), so it proves the wiring but not how
+well a given model labels your real transactions. To make model choice data-driven,
+put a few dozen labeled rows in `data/eval/categorization.csv` (gitignored;
+`description,expected_category`) and run, with Ollama up:
+
+```bash
+uv run python scripts/eval_categorization.py
+```
+
+It runs the live model over the LLM tier only and reports accuracy + the misses — a
+20-minute way to compare models before changing `llm.model`.
+
 ### Privacy guard
 
 A deterministic pre-commit hook (`.githooks/check_pii.py`) blocks staging any

@@ -102,6 +102,7 @@ def ollama_categorizer(model: str, host: str, timeout: float = 60.0) -> LlmCateg
             try:
                 result = client.chat.completions.create(
                     model=model,
+                    temperature=0,  # deterministic structured output (extraction/classification)
                     response_model=_response_model(tuple(categories)),
                     max_retries=reprompt,
                     messages=[
@@ -176,6 +177,7 @@ def ollama_extractor(model: str, host: str, timeout: float = 60.0) -> LlmExtract
             try:
                 result = client.chat.completions.create(
                     model=model,
+                    temperature=0,  # deterministic structured output (extraction/classification)
                     response_model=_Statement,
                     max_retries=reprompt,
                     messages=[
@@ -251,6 +253,7 @@ def ollama_query_planner(
             try:
                 result = client.chat.completions.create(
                     model=model,
+                    temperature=0,  # deterministic structured output (extraction/classification)
                     response_model=_Plan,
                     max_retries=reprompt,
                     messages=[
