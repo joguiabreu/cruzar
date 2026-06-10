@@ -122,6 +122,25 @@ def _spending_section(conn: sqlite3.Connection, year_month: str) -> list[str]:
     return lines
 
 
+def _spending_by_category_section(
+    conn: sqlite3.Connection, year_month: str, *, fetch: Fetcher | None
+) -> list[str]:
+    """This month's cash spending grouped by category, in EUR (ADR-5) — the rows sum
+    to the Summary's Spent. Degrades to an 'n/a' note if a month-end rate is missing,
+    like the Summary cells (SPEC FX degradation)."""
+    lines = ["## Spending by Category", "", "| Category | Spent (EUR) |", "| --- | --- |"]
+    try:
+        rows = metrics.spending_by_category(conn, year_month, fetch=fetch)
+    except FxError:
+        logger.warning("FX unavailable for %s Spending by Category; rendering 'n/a'", year_month)
+        lines += ["| _FX rate unavailable_ | n/a |", ""]
+        return lines
+    for category, amount in rows:
+        lines.append(f"| {category} | {_eur(amount)} |")
+    lines.append("")
+    return lines
+
+
 def _earning_section(conn: sqlite3.Connection, year_month: str) -> list[str]:
     """Income counterpart of Spending Detail: cash-account inflows this month.
     Same filter as metrics.earned, itemised — the rows sum to that month's Earned."""
@@ -300,6 +319,7 @@ def write_reports(
         lines = [f"# Cruzar — {year_month}", ""]
         lines += _summary_section(conn, year_month, months, patterns, fetch=fetch)
         lines += _spending_section(conn, year_month)
+        lines += _spending_by_category_section(conn, year_month, fetch=fetch)
         lines += _earning_section(conn, year_month)
         lines += _investment_section(conn, metrics.month_end(year_month), fetch=fetch)
         lines += _needs_categorization_section(conn, year_month)

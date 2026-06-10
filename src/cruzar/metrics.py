@@ -261,6 +261,37 @@ def investment_holdings(conn: sqlite3.Connection, on: date) -> list[AccountHoldi
     return result
 
 
+def spending_by_category(
+    conn: sqlite3.Connection, ym: str, *, fetch: Fetcher | None
+) -> list[tuple[str, Decimal]]:
+    """This month's cash spending grouped by category, in EUR (most-spent first).
+
+    Same filter as ``spent`` (cash accounts, amount < 0, not transfer, not superseded),
+    joined to ``merchants.category`` — spending with no matched merchant is bucketed as
+    ``Uncategorized`` so nothing is dropped and the totals sum to ``spent(ym)``. Summed
+    per (category, currency) then converted to EUR at the month-end rate (ADR-5)."""
+    rows = conn.execute(
+        "SELECT a.currency AS currency, t.amount AS amount, "
+        "COALESCE(m.category, 'Uncategorized') AS category FROM transactions t "
+        "JOIN statements s ON t.statement_id = s.id "
+        "JOIN accounts a ON s.account_id = a.id "
+        "LEFT JOIN merchants m ON t.merchant_id = m.id "
+        f"WHERE a.account_type IN ({','.join('?' * len(_CASH_TYPES))}) "
+        "AND t.is_transfer = 0 AND t.superseded = 0 AND t.amount LIKE '-%' "
+        "AND substr(t.date, 1, 7) = ?",
+        (*_CASH_TYPES, ym),
+    ).fetchall()
+    by_cat_cur: dict[tuple[str, str], Decimal] = defaultdict(lambda: Decimal(0))
+    for row in rows:
+        by_cat_cur[(row["category"], row["currency"])] += Decimal(row["amount"])
+    end = month_end(ym)
+    totals: dict[str, Decimal] = defaultdict(lambda: Decimal(0))
+    for (category, currency), amount in by_cat_cur.items():
+        totals[category] += fx.convert(conn, amount, currency, end, fetch=fetch)
+    # Ascending amount = most negative (most spent) first; tie-break by name for stability.
+    return sorted(totals.items(), key=lambda kv: (kv[1], kv[0]))
+
+
 def _flow(
     conn: sqlite3.Connection, ym: str, *, positive: bool, fetch: Fetcher | None
 ) -> Decimal:

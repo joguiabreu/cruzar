@@ -137,6 +137,13 @@ generated Markdown (placeholder data shown):
 | 2026-05-27 | -10.00 | EUR | Streaming Co | Subscriptions |
 | 2026-05-20 | -42.50 | EUR | Corner Grocer | Groceries |
 
+## Spending by Category
+
+| Category | Spent (EUR) |
+| --- | --- |
+| Groceries | -42.50 |
+| Subscriptions | -10.00 |
+
 ## Earning Detail
 
 | Date | Amount | Currency | Source |
@@ -185,7 +192,9 @@ a EUR Grand Total. The **Spending Detail** and
 **Earning Detail** sections are native-currency and itemise that month's
 cash outflows and inflows respectively (Earning Detail's rows sum to the Summary's
 Earned); transfers between your own accounts are excluded — see
-[Transfers](#transfers). **Needs Categorization** appears only when this month has
+[Transfers](#transfers). **Spending by Category** rolls that month's spending up by
+the matched merchant's category, in EUR (spending the categorizer couldn't place is
+bucketed as *Uncategorized*); its rows sum to the Summary's Spent. **Needs Categorization** appears only when this month has
 cash transactions no merchant pattern matched and the LLM didn't confidently place;
 it shows the raw description and the LLM's (unapplied) guess for you to act on — see
 [Categorization](#categorization). **Conflicts** appears only when a later statement

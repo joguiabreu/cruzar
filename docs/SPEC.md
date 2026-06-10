@@ -160,6 +160,13 @@ Columns: Date | Amount | Currency | Merchant | Category
 Transactions on cash accounts where amount < 0 AND is_transfer = false, this
 month only. Sorted by date descending.
 
+Section 2b: Spending by Category (this month)
+Columns: Category | Spent (EUR)
+This month's cash spending (the same rows as Spending Detail) grouped by the matched
+merchant's category, summed and converted to base (EUR) at the month-end rate (ADR-5).
+Spending with no matched merchant is bucketed as `Uncategorized`; rows sort
+most-spent-first. The rows sum to the Summary's Spent for the month.
+
 Section 3: Earning Detail (this month)
 Columns: Date | Amount | Currency | Source
 Transactions on cash accounts where amount > 0 AND is_transfer = false, this
@@ -343,7 +350,7 @@ Columns: Date | Account | Description | Amount (kept) | Amount (restated)
 - AC6: Each investment statement creates exactly one holdings_snapshot row per holding, dated period_end, linked via statement_id; existing rows never UPDATEd/DELETEd. Verified by grouping snapshots by statement_id.
 - AC7: Adding an account requires only one sources.yaml entry, (if format differs) one parser module, one test fixture. No core pipeline changes.
 - AC8: Every parser module has ≥1 fixture (redacted PDF + expected JSON). Runs on every commit.
-- AC9: The report contains Summary, Spending Detail, Earning Detail, Investment Detail in order, plus an optional Needs-Categorization section iff un-categorized merchants exist and an optional Conflicts section iff a restated transaction exists this month (ADR-8). Schemas/currencies as in Outputs.
+- AC9: The report contains Summary, Spending Detail, Spending by Category, Earning Detail, Investment Detail in order, plus an optional Needs-Categorization section iff un-categorized merchants exist and an optional Conflicts section iff a restated transaction exists this month (ADR-8). Schemas/currencies as in Outputs.
 - AC10: Converted figures use the `fx_rates` row whose `date` = the report's month-end (ADR-5); fetched+persisted if absent. Fixture: one foreign-currency account, regenerate the same month on two calendar days → identical converted output.
 - AC11: Debits negative, credits positive; no amount+type split. Verified by MIN/MAX(amount).
 - AC12: Every transaction has non-null account_id via the FK chain; no orphans. Statements failing resolution are unresolved_account with zero transactions. Verified by LEFT JOIN.
