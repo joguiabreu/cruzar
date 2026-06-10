@@ -71,7 +71,10 @@ Runs the full manual-ingest pipeline. It:
 5. Parses and persists each statement.
 6. **Flags transfers** (`is_transfer`) so inter-account moves don't count as
    spending — see [Transfers](#transfers).
-7. Categorizes merchants, and writes one Markdown report per month to `reports/`.
+7. **Flags restatements** so a corrected line re-listed on a later statement isn't
+   double-counted — the first one is kept, the later flagged (see the Conflicts
+   section of a report).
+8. Categorizes merchants, and writes one Markdown report per month to `reports/`.
 
 ```bash
 uv run cruzar process
@@ -140,6 +143,12 @@ generated Markdown (placeholder data shown):
 | Raw Description | LLM-Proposed Merchant | LLM-Proposed Category |
 | --- | --- | --- |
 | POS 4521 UNKNOWN VENDOR | Maybe Cafe | Dining |
+
+## Conflicts
+
+| Date | Account | Description | Amount (kept) | Amount (restated) |
+| --- | --- | --- | --- | --- |
+| 2026-05-15 | Example Checking | EXAMPLE SUBSCRIPTION | -10.00 | -12.00 |
 ```
 
 **Summary** (Section 1) is in EUR: one row per month (last 12, newest first),
@@ -159,7 +168,10 @@ Earned); transfers between your own accounts are excluded — see
 [Transfers](#transfers). **Needs Categorization** appears only when this month has
 cash transactions no merchant pattern matched and the LLM didn't confidently place;
 it shows the raw description and the LLM's (unapplied) guess for you to act on — see
-[Categorization](#categorization).
+[Categorization](#categorization). **Conflicts** appears only when a later statement
+re-lists a transaction with a corrected amount: the line lands as a second row, so
+Cruzar keeps the first one (it stays in your totals) and flags the restatement here
+rather than silently merging or double-counting it — you decide which is right.
 
 ## Account setup
 

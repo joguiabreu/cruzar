@@ -66,6 +66,11 @@ CREATE TABLE IF NOT EXISTS transactions (
     description_raw     TEXT NOT NULL,    -- immutable
     intra_statement_seq INTEGER NOT NULL, -- line ordinal within statement; feeds content_hash
     is_transfer         INTEGER NOT NULL DEFAULT 0,
+    -- ADR-8: a restated line on a LATER statement hashes differently (amount
+    -- changed) and survives dedup as a second row. conflicts.detect sets this 1
+    -- on the later leg; aggregates exclude it so it's never double-counted. The
+    -- earliest leg (first write) stays 0 and is kept.
+    superseded          INTEGER NOT NULL DEFAULT 0,
     merchant_id         INTEGER REFERENCES merchants(id),  -- nullable, mutable
     merchant_source     TEXT NOT NULL DEFAULT 'none' CHECK (merchant_source IN ('manual', 'rule', 'llm', 'none')),
     content_hash        TEXT NOT NULL UNIQUE

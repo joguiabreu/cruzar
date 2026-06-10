@@ -179,6 +179,13 @@ Section 5 (conditional): Needs Categorization
 Shown iff un-categorized merchants exist.
 Columns: Raw Description | LLM-Proposed Merchant | LLM-Proposed Category
 
+Section 6 (conditional): Conflicts
+Shown iff a restated transaction exists this month (ADR-8). A later statement
+re-listed a line with a different amount, so it lands as a second row, flagged
+`superseded`; the earliest (first-write) leg is kept and counted, the later one
+is excluded — surfaced here, never merged. Native currency.
+Columns: Date | Account | Description | Amount (kept) | Amount (restated)
+
 ## Data model
 
 <Tables / entities, fields, PKs, relationships. Mark immutable fields.>
@@ -235,7 +242,10 @@ Columns: Raw Description | LLM-Proposed Merchant | LLM-Proposed Category
   same amount/description, collide. See Known limitations.
 - First-write-wins (ADR-8): a corrected/restated transaction on a later
   statement hashes differently → lands as a second row; flagged per AC14,
-  never silently merged.
+  never silently merged. Restatement detection keys on
+  `(account_id, date, description_raw)` across ≥2 statements — `intra_statement_seq`
+  is excluded because it drifts when a line reappears amid different neighbours,
+  and same-statement same-key lines are independent (never coalesced).
 
 ### holdings_snapshot
 
@@ -333,7 +343,7 @@ Columns: Raw Description | LLM-Proposed Merchant | LLM-Proposed Category
 - AC6: Each investment statement creates exactly one holdings_snapshot row per holding, dated period_end, linked via statement_id; existing rows never UPDATEd/DELETEd. Verified by grouping snapshots by statement_id.
 - AC7: Adding an account requires only one sources.yaml entry, (if format differs) one parser module, one test fixture. No core pipeline changes.
 - AC8: Every parser module has ≥1 fixture (redacted PDF + expected JSON). Runs on every commit.
-- AC9: The report contains Summary, Spending Detail, Earning Detail, Investment Detail in order, plus an optional Needs-Categorization section iff un-categorized merchants exist. Schemas/currencies as in Outputs.
+- AC9: The report contains Summary, Spending Detail, Earning Detail, Investment Detail in order, plus an optional Needs-Categorization section iff un-categorized merchants exist and an optional Conflicts section iff a restated transaction exists this month (ADR-8). Schemas/currencies as in Outputs.
 - AC10: Converted figures use the `fx_rates` row whose `date` = the report's month-end (ADR-5); fetched+persisted if absent. Fixture: one foreign-currency account, regenerate the same month on two calendar days → identical converted output.
 - AC11: Debits negative, credits positive; no amount+type split. Verified by MIN/MAX(amount).
 - AC12: Every transaction has non-null account_id via the FK chain; no orphans. Statements failing resolution are unresolved_account with zero transactions. Verified by LEFT JOIN.

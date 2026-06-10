@@ -169,7 +169,7 @@ def net_contrib(
         "JOIN statements s ON t.statement_id = s.id "
         "JOIN accounts a ON s.account_id = a.id "
         f"WHERE a.account_type IN ({','.join('?' * len(_INVESTMENT_TYPES))}) "
-        "AND a.emits_cash_flows = 1 AND substr(t.date, 1, 7) = ?",
+        "AND a.emits_cash_flows = 1 AND t.superseded = 0 AND substr(t.date, 1, 7) = ?",
         (*_INVESTMENT_TYPES, ym),
     ).fetchall()
     by_currency: dict[str, Decimal] = defaultdict(lambda: Decimal(0))
@@ -269,7 +269,7 @@ def _flow(
         "JOIN statements s ON t.statement_id = s.id "
         "JOIN accounts a ON s.account_id = a.id "
         f"WHERE a.account_type IN ({','.join('?' * len(_CASH_TYPES))}) "
-        "AND t.is_transfer = 0 AND substr(t.date, 1, 7) = ?",
+        "AND t.is_transfer = 0 AND t.superseded = 0 AND substr(t.date, 1, 7) = ?",
         (*_CASH_TYPES, ym),
     ).fetchall()
     by_currency: dict[str, Decimal] = defaultdict(lambda: Decimal(0))

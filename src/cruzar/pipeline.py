@@ -14,7 +14,7 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
-from cruzar import categorize, fx, report, transfers
+from cruzar import categorize, conflicts, fx, report, transfers
 from cruzar.config import load_config
 from cruzar.db import connect, init_schema
 from cruzar.parsers import get_parser
@@ -69,6 +69,7 @@ def process(
         seed_config(conn, config)
         _ingest_inbox(conn, Path(inbox_dir))
         transfers.detect(conn, config.transfer_patterns)  # normalize (ADR-15)
+        conflicts.detect(conn)  # flag restated transactions (normalize, ADR-8)
         # LLM tier (ADR-13): build the Ollama client only when enabled; otherwise
         # rule-only with zero calls. The import is local so offline runs never load it.
         propose = None

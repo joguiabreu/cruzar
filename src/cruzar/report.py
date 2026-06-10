@@ -5,7 +5,9 @@ derived and regenerable (ADR-3); this is read-only w.r.t. the DB (AC13). Section
 shows up to the last 12 months (descending) as of each report's month, in EUR
 (ADR-16, FX at the persisted period-end rate), including Portfolio Δ (ADR-14). A
 conditional Needs-Categorization section lists this month's still-uncategorized
-transactions with the LLM's proposal (ADR-13), shown only when any exist.
+transactions with the LLM's proposal (ADR-13), shown only when any exist. A
+conditional Conflicts section (ADR-8) surfaces restated transactions, shown only
+when any exist.
 """
 
 from __future__ import annotations
@@ -98,7 +100,7 @@ def _spending_section(conn: sqlite3.Connection, year_month: str) -> list[str]:
         "JOIN accounts a ON s.account_id = a.id "
         "LEFT JOIN merchants m ON t.merchant_id = m.id "
         f"WHERE a.account_type IN ({','.join('?' * len(_CASH_TYPES))}) "
-        "AND t.is_transfer = 0 "
+        "AND t.is_transfer = 0 AND t.superseded = 0 "
         "AND t.amount LIKE '-%' "  # debits are signed Decimal strings; negative => leading '-'
         "AND substr(t.date, 1, 7) = ? "
         "ORDER BY t.date DESC, t.id DESC",
@@ -131,7 +133,7 @@ def _earning_section(conn: sqlite3.Connection, year_month: str) -> list[str]:
         "JOIN accounts a ON s.account_id = a.id "
         "LEFT JOIN merchants m ON t.merchant_id = m.id "
         f"WHERE a.account_type IN ({','.join('?' * len(_CASH_TYPES))}) "
-        "AND t.is_transfer = 0 "
+        "AND t.is_transfer = 0 AND t.superseded = 0 "
         "AND t.amount NOT LIKE '-%' AND t.amount != '0.00' "  # inflows only
         "AND substr(t.date, 1, 7) = ? "
         "ORDER BY t.date DESC, t.id DESC",
@@ -217,7 +219,7 @@ def _needs_categorization_section(conn: sqlite3.Connection, year_month: str) -> 
         "JOIN accounts a ON s.account_id = a.id "
         "LEFT JOIN llm_categorizations l ON l.description_raw = t.description_raw "
         f"WHERE a.account_type IN ({','.join('?' * len(_CASH_TYPES))}) "
-        "AND t.merchant_source = 'none' AND t.is_transfer = 0 "
+        "AND t.merchant_source = 'none' AND t.is_transfer = 0 AND t.superseded = 0 "
         "AND substr(t.date, 1, 7) = ? "
         "ORDER BY t.description_raw",
         (*_CASH_TYPES, year_month),
@@ -239,6 +241,51 @@ def _needs_categorization_section(conn: sqlite3.Connection, year_month: str) -> 
     return lines
 
 
+def _conflicts_section(conn: sqlite3.Connection, year_month: str) -> list[str]:
+    """Section 6 (conditional, AC14): restated transactions whose date falls in this
+    month. A later statement re-presented a line with a different amount, so it lands
+    as a second row flagged `superseded` (ADR-8). The earliest leg (kept) stays in the
+    totals; both amounts are shown side by side. Rendered only when non-empty."""
+    rows = conn.execute(
+        "SELECT t.id AS id, t.date AS date, a.name AS account_name, "
+        "t.description_raw AS description_raw, t.amount AS amount, "
+        "s.account_id AS account_id, t.superseded AS superseded "
+        "FROM transactions t "
+        "JOIN statements s ON t.statement_id = s.id "
+        "JOIN accounts a ON s.account_id = a.id "
+        "WHERE substr(t.date, 1, 7) = ? "
+        "ORDER BY t.id",
+        (year_month,),
+    ).fetchall()
+    # The kept leg of a conflict is the lowest-id non-superseded row sharing the key.
+    kept: dict[tuple[int, str, str], sqlite3.Row] = {}
+    for row in rows:
+        if not row["superseded"]:
+            kept.setdefault((row["account_id"], row["date"], row["description_raw"]), row)
+
+    lines = [
+        "## Conflicts",
+        "",
+        "| Date | Account | Description | Amount (kept) | Amount (restated) |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    count = 0
+    for row in rows:
+        if not row["superseded"]:
+            continue
+        original = kept.get((row["account_id"], row["date"], row["description_raw"]))
+        kept_amount = original["amount"] if original is not None else ""
+        lines.append(
+            f"| {row['date']} | {row['account_name']} | {row['description_raw']} "
+            f"| {kept_amount} | {row['amount']} |"
+        )
+        count += 1
+    if count == 0:
+        return []
+    lines.append("")
+    return lines
+
+
 def write_reports(
     conn: sqlite3.Connection,
     reports_dir: Path,
@@ -256,6 +303,7 @@ def write_reports(
         lines += _earning_section(conn, year_month)
         lines += _investment_section(conn, metrics.month_end(year_month), fetch=fetch)
         lines += _needs_categorization_section(conn, year_month)
+        lines += _conflicts_section(conn, year_month)
         (reports_dir / f"cruzar-{year_month}.md").write_text(
             "\n".join(lines), encoding="utf-8"
         )
