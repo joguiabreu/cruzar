@@ -9,7 +9,8 @@ base_currency: EUR
 # run still completes; affected lines stay uncategorized and retry next run.
 llm:
   enabled: true
-  model: qwen3.5:4b # any Ollama model string
+  model: qwen2.5:3b # any Ollama model string — use a NON-thinking model (reasoning models
+                    # like qwen3.x emit <think>, are slow, and truncate the JSON on Ollama)
   host: http://localhost:11434
   min_confidence: 0.7 # below this, a proposal is shown but not auto-assigned
   timeout_seconds: 60 # per request; if Ollama is down the run fails fast and skips

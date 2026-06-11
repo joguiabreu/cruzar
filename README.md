@@ -306,7 +306,7 @@ fx:
 | --- | --- | --- |
 | `base_currency` | Report/base currency (EUR for v1). | Don't — v1 is EUR-only (ADR-5). |
 | `llm.enabled` | Turns the LLM categorization tier on/off. | You want a fully offline, rule-only run, or Ollama isn't installed. |
-| `llm.model` | Which **Ollama** model labels merchants. Must be pulled first (`ollama pull <model>`). | You want faster/better labeling — **use a small non-thinking model** like `llama3.2:3b`; avoid reasoning models (e.g. `qwen3`), which emit huge `<think>` blocks and time out. |
+| `llm.model` | Which **Ollama** model labels merchants. Must be pulled first (`ollama pull <model>`). | You want faster/better labeling. **Use a non-thinking model** (e.g. `qwen2.5:7b`/`:3b`, `llama3.2:3b`); reasoning models (`qwen3.x`) emit a `<think>` block that is slow and truncates the JSON, and Ollama's structured-output path gives no reliable way to disable it. |
 | `llm.host` | Ollama's address. | Ollama runs on another port/host. |
 | `llm.min_confidence` | Threshold to auto-apply a proposal; below it the guess goes to *Needs Categorization* unapplied. | Too much lands in Needs-Categorization → lower toward `0.6`; too many wrong auto-assigns → raise. |
 | `llm.timeout_seconds` | Per-request timeout. After 3 consecutive timeouts the run gives up the LLM pass with a hint. | Your model is slow but you want to wait longer (or you switched to a fast model and want it tighter). |
