@@ -25,7 +25,7 @@ from typing import Any
 import pdfplumber
 
 from cruzar.models import ParsedHolding, ParsedStatement
-from cruzar.parsers._common import cluster_rows, row_text
+from cruzar.parsers._common import ParserError, cluster_rows, row_text
 
 # A money/quantity number: comma thousands, dot decimal (e.g. "1,234.56", "-12.34").
 _NUM_RE = re.compile(r"^-?[\d,]+(?:\.\d+)?$")
@@ -47,7 +47,7 @@ _VALUE_BAND = (585.0, 635.0)
 _ASSET_HEADERS = {"Stocks", "Forex", "Bonds", "Funds", "Options", "Total"}
 
 
-class InteractiveBrokersParseError(Exception):
+class InteractiveBrokersParseError(ParserError):
     """Raised when the IBKR statement layout cannot be parsed."""
 
 

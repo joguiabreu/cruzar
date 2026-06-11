@@ -18,7 +18,7 @@ from typing import Any
 import pdfplumber
 
 from cruzar.models import ParsedStatement, ParsedTransaction
-from cruzar.parsers._common import ExtractionFallback, cluster_rows, row_text
+from cruzar.parsers._common import ExtractionFallback, ParserError, cluster_rows, row_text
 
 # AC4a: if fewer than this fraction of candidate transaction rows resolve an amount
 # column, the layout is too degraded to trust the structured parse → LLM fallback.
@@ -34,7 +34,7 @@ _DATE_X0_MAX = 110.0  # the two date columns sit left of this
 _PERIOD_RE = re.compile(r"EXTRATO DE (\d{4}/\d{2}/\d{2}) A (\d{4}/\d{2}/\d{2})")
 
 
-class ActivoBankParseError(Exception):
+class ActivoBankParseError(ParserError):
     """Raised when the ActivoBank statement layout cannot be parsed."""
 
 

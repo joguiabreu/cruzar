@@ -19,9 +19,9 @@ from cruzar.categorize import LlmError
 from cruzar.config import load_config
 from cruzar.db import connect, init_schema
 from cruzar.extract import LlmExtractor
+from cruzar.models import ParsedStatement
 from cruzar.parsers import get_parser
-from cruzar.parsers._common import ExtractionFallback
-from cruzar.parsers.activobank import ActivoBankParseError
+from cruzar.parsers._common import ExtractionFallback, ParserError
 from cruzar.persist import persist_statement, seed_config
 
 # Logs carry filenames and counts only — never transaction descriptions or
@@ -57,6 +57,23 @@ def _resolve_account(conn: sqlite3.Connection, folder: str) -> sqlite3.Row | Non
     return conn.execute(
         "SELECT * FROM accounts WHERE account_match = ?", (folder,)
     ).fetchone()
+
+
+def _ingest_summary(statement: ParsedStatement) -> str:
+    """A human phrase for what a statement contributed — cash transactions and/or
+    holdings. Investment statements carry holdings (snapshots), not transactions, so
+    plain '0 transactions' hides that something was ingested."""
+
+    def _n(count: int, noun: str) -> str:
+        return f"{count} {noun}{'' if count == 1 else 's'}"
+
+    n_txn, n_hold = len(statement.transactions), len(statement.holdings)
+    parts: list[str] = []
+    if n_txn or not n_hold:  # show txns unless it's a pure holdings snapshot
+        parts.append(_n(n_txn, "transaction"))
+    if n_hold:
+        parts.append(_n(n_hold, "holding"))
+    return ", ".join(parts)
 
 
 def process(
@@ -218,8 +235,11 @@ def ingest_inbox(
                 conn.commit()
                 failed += 1
                 continue
-        except (ActivoBankParseError, ValueError):
-            logger.error("parse failed, skipping %s", pdf_path.name)
+        except (ParserError, ValueError) as exc:
+            # Any parser's failure (ADR-11 ParserError base) or a stray date/Decimal
+            # ValueError → mark this file parse_failed and continue; one bad statement
+            # never crashes the whole run (SPEC §Edge cases: fail loud, write nothing).
+            logger.error("parse failed, skipping %s (%s)", pdf_path.name, exc)
             conn.rollback()
             _record_file(conn, file_hash, pdf_path.name, "parse_failed", None)
             conn.commit()
@@ -247,9 +267,7 @@ def ingest_inbox(
             statement_id = persist_statement(conn, account["id"], statement)
             _record_file(conn, file_hash, pdf_path.name, "ok", statement_id)
             conn.commit()
-            logger.info(
-                "ingested %s (%d transactions)", pdf_path.name, len(statement.transactions)
-            )
+            logger.info("ingested %s (%s)", pdf_path.name, _ingest_summary(statement))
             ingested += 1
         except Exception:
             conn.rollback()

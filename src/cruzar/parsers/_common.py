@@ -15,6 +15,13 @@ from typing import Any
 _ROW_TOLERANCE = 3.0  # vertical clustering tolerance (points)
 
 
+class ParserError(Exception):
+    """Base for every institution parser's failure (ADR-11). The pipeline catches this
+    so one unparseable file is marked ``parse_failed`` and the run continues — a parse
+    failure is loud (recorded, logged) but never crashes the whole run. A non-ParserError
+    escaping a parser is a code bug and is allowed to surface."""
+
+
 class ExtractionFallback(Exception):
     """Raised by a parser when pdfplumber recovers <50% of the expected columns
     (AC4a) — the structured layout is too degraded to trust, but the page text is

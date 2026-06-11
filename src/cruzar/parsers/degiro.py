@@ -25,7 +25,7 @@ from typing import Any
 import pdfplumber
 
 from cruzar.models import ParsedHolding, ParsedStatement, ParsedTransaction
-from cruzar.parsers._common import cluster_rows, row_text
+from cruzar.parsers._common import ParserError, cluster_rows, row_text
 
 _DATE_RE = re.compile(r"^\d{2}-\d{2}-\d{4}$")
 _ISIN_RE = re.compile(r"^[A-Z]{2}[0-9A-Z]{9,10}$")
@@ -36,7 +36,7 @@ _NUMPIECE_RE = re.compile(r"^-?[\d,]+$")
 _PORTFOLIO_DATE_RE = re.compile(r"Portfolio Overview per (\d{2}-\d{2}-\d{4})")
 
 
-class DegiroParseError(Exception):
+class DegiroParseError(ParserError):
     """Raised when the Degiro statement layout cannot be parsed."""
 
 
