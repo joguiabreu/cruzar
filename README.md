@@ -256,9 +256,11 @@ Adding a new account is a **YAML edit only** (SPEC AC7) — no code change —
 *unless* the institution's PDF format needs a new parser module (see below).
 
 > The `institution` value must match a parser module in
-> `src/cruzar/parsers/`. The repo ships with five parsers today (`activobank`,
-> `moey`, `revolut`, `interactivebrokers`, and `degiro` — the last two are
-> investment accounts); if your bank isn't covered, add one (next section).
+> `src/cruzar/parsers/`. The repo ships with six parsers today (`activobank`,
+> `moey`, `revolut`, `interactivebrokers`, `degiro`, and `aforronet` — the last
+> three are investment accounts; `aforronet` reads AforroNet *Certificado de
+> Aforro* statements, the Portuguese state savings certificates, as a held
+> position); if your bank isn't covered, add one (next section).
 
 > **ActivoBank multi-month exports:** a single PDF that stacks several monthly
 > sections (each with its own `EXTRATO DE … A …`, `SALDO INICIAL/FINAL`, and salary)

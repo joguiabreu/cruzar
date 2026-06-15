@@ -13,7 +13,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from cruzar.models import ParsedStatement
-from cruzar.parsers import activobank, degiro, interactivebrokers, moey, revolut
+from cruzar.parsers import aforronet, activobank, degiro, interactivebrokers, moey, revolut
 
 Parser = Callable[[str | Path], "ParsedStatement | list[ParsedStatement]"]
 
@@ -23,6 +23,7 @@ PARSERS: dict[str, Parser] = {
     "revolut": revolut.parse,
     "interactivebrokers": interactivebrokers.parse,
     "degiro": degiro.parse,
+    "aforronet": aforronet.parse,
 }
 
 
