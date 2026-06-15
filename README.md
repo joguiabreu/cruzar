@@ -145,10 +145,10 @@ generated Markdown (placeholder data shown):
 
 ## Summary
 
-| Month | Earned | Spent | Portfolio Δ | Net Worth |
-| --- | --- | --- | --- | --- |
-| 2026-05 | 2000.00 | -52.50 | 130.40 | 18230.40 |
-| 2026-04 | 2000.00 | -610.00 | — | 17800.10 |
+| Month | Earned | Spent | Net | Portfolio Δ | Net Worth |
+| --- | --- | --- | --- | --- | --- |
+| 2026-05 | 2000.00 | -52.50 | 1947.50 | 130.40 | 18230.40 |
+| 2026-04 | 2000.00 | -610.00 | 1390.00 | — | 17800.10 |
 
 ## Spending Detail
 
@@ -199,8 +199,9 @@ generated Markdown (placeholder data shown):
 ```
 
 **Summary** (Section 1) is in EUR: one row per month (last 12, newest first),
-computed as of each month-end. **Earned/Spent** are cash-account flows; **Net
-Worth** sums cash balances + holdings value across accounts, converting foreign
+computed as of each month-end. **Earned/Spent** are cash-account flows and **Net**
+is their sum — the cash you kept that month (negative when you spent more than you
+earned). **Net Worth** sums cash balances + holdings value across accounts, converting foreign
 holdings at the month-end rate (see [FX rates](#fx-rates)). **Portfolio Δ** is
 total return on your investment accounts net of external contributions, month over
 month — `(value now − value a month ago) − money you paid in or took out`; it shows

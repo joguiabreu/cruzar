@@ -80,6 +80,12 @@ def spent(conn: sqlite3.Connection, ym: str, *, fetch: Fetcher | None) -> Decima
     return _flow(conn, ym, positive=False, fetch=fetch)
 
 
+def net(conn: sqlite3.Connection, ym: str, *, fetch: Fetcher | None) -> Decimal:
+    """Net cash flow in ``ym``, in EUR: ``earned + spent`` (Spent is negative, so
+    this is what stayed in the cash accounts). Pure composition — no new query."""
+    return earned(conn, ym, fetch=fetch) + spent(conn, ym, fetch=fetch)
+
+
 def net_worth(conn: sqlite3.Connection, on: date, *, fetch: Fetcher | None) -> Decimal:
     """Net Worth as of month-end ``on`` (ADR-16): for each account not closed by
     ``on``, the latest cash ``closing_balance`` ≤ on plus the latest holdings

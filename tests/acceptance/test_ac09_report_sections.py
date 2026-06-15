@@ -73,12 +73,48 @@ def test_ac09_sections_present_in_order_with_investment_detail(tmp_path: Path) -
             "Summary", "Spending Detail", "Spending by Category", "Earning Detail",
             "Investment Detail", "Needs Categorization",
         ]
+        # Summary carries a Net column (Earned + Spent) between Spent and Portfolio Δ.
+        assert "| Month | Earned | Spent | Net | Portfolio Δ | Net Worth |" in content
         inv = content.split("## Investment Detail", 1)[1]
         assert "### Broker" in inv
         assert "| USD1 | 2 | USD | 300.00 | 360.00 | 60.00 | 20.0% |" in inv
         assert "| EUR1 | 30 | EUR | n/a | 1500.00 | n/a | n/a |" in inv
         # Grand Total EUR = 360 USD / 2 + 1500 EUR = 180 + 1500 = 1680.00
         assert "### Grand Total (EUR)" in inv and "1680.00" in inv
+    finally:
+        conn.close()
+
+
+def test_ac09_summary_net_equals_earned_plus_spent(tmp_path: Path) -> None:
+    """The Net column reconciles for free: each month's Net cell == Earned + Spent,
+    including a month where Spent exceeds Earned (Net negative)."""
+    conn = connect(tmp_path / "n.db")
+    try:
+        init_schema(conn)
+        checking = _account(conn, "Checking", "checking")
+        stmt = _statement(conn, checking, "100.00")
+        # May: earned 2000.00, spent -52.50 -> Net 1947.50 (positive)
+        # April: earned 100.00, spent -610.00 -> Net -510.00 (negative)
+        rows = [
+            ("2026-05-10", "2000.00", "salary", 1, "h1"),
+            ("2026-05-12", "-52.50", "shop", 2, "h2"),
+            ("2026-04-10", "100.00", "refund", 3, "h3"),
+            ("2026-04-12", "-610.00", "rent", 4, "h4"),
+        ]
+        conn.executemany(
+            "INSERT INTO transactions(statement_id, date, amount, description_raw, "
+            "intra_statement_seq, content_hash) VALUES (?, ?, ?, ?, ?, ?)",
+            [(stmt, *r) for r in rows],
+        )
+        conn.commit()
+
+        report.write_reports(conn, tmp_path / "out", fetch=None)
+        content = (tmp_path / "out" / "cruzar-2026-05.md").read_text(encoding="utf-8")
+
+        summary = content.split("## Summary", 1)[1].split("##", 1)[0]
+        # Net = Earned + Spent in each row.
+        assert "| 2026-05 | 2000.00 | -52.50 | 1947.50 |" in summary
+        assert "| 2026-04 | 100.00 | -610.00 | -510.00 |" in summary
     finally:
         conn.close()
 

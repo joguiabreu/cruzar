@@ -74,18 +74,19 @@ def _summary_section(
     lines = [
         "## Summary",
         "",
-        "| Month | Earned | Spent | Portfolio Δ | Net Worth |",
-        "| --- | --- | --- | --- | --- |",
+        "| Month | Earned | Spent | Net | Portfolio Δ | Net Worth |",
+        "| --- | --- | --- | --- | --- | --- |",
     ]
     for ym in rows:
         end = metrics.month_end(ym)
         earned = _cell(partial(metrics.earned, conn, ym, fetch=fetch), what="Earned", ym=ym)
         spent = _cell(partial(metrics.spent, conn, ym, fetch=fetch), what="Spent", ym=ym)
+        net = _cell(partial(metrics.net, conn, ym, fetch=fetch), what="Net", ym=ym)
         delta = _delta_cell(conn, ym, patterns, fetch=fetch)
         net_worth = _cell(
             partial(metrics.net_worth, conn, end, fetch=fetch), what="Net Worth", ym=ym
         )
-        lines.append(f"| {ym} | {earned} | {spent} | {delta} | {net_worth} |")
+        lines.append(f"| {ym} | {earned} | {spent} | {net} | {delta} | {net_worth} |")
     lines.append("")
     return lines
 

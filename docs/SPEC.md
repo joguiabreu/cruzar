@@ -136,6 +136,9 @@ period-end rate per ADR-5).
   dividends credited to a cash account.
 - **Spent:** SUM(amount) over transactions in M on **cash accounts** where
   amount < 0 AND is_transfer = false. (Negative.)
+- **Net:** Earned + Spent — net cash flow for M (what stayed in the cash
+  accounts). Derived from the two columns above; no new query. Negative when
+  Spent exceeds Earned.
 - **Portfolio Δ:** total return net of contributions, over investment
   accounts — see ADR-14. Shows "—" when no prior snapshot exists.
 - **Net Worth:** base-currency total, at M's month-end, over all non-closed
@@ -151,7 +154,7 @@ period-end rate per ADR-5).
   currency**; Grand Total in **base currency**.
 
 Section 1: Summary
-Columns: Month | Earned | Spent | Portfolio Δ | Net Worth
+Columns: Month | Earned | Spent | Net | Portfolio Δ | Net Worth
 One row per month, descending. Up to last 12 months of available data; fewer
 if less history. No padding rows.
 
@@ -360,7 +363,7 @@ design notes in `docs/design/query_planner.md`.
 - AC6: Each investment statement creates exactly one holdings_snapshot row per holding, dated period_end, linked via statement_id; existing rows never UPDATEd/DELETEd. Verified by grouping snapshots by statement_id.
 - AC7: Adding an account requires only one sources.yaml entry, (if format differs) one parser module, one test fixture. No core pipeline changes.
 - AC8: Every parser module has ≥1 fixture (redacted PDF + expected JSON). Runs on every commit.
-- AC9: The report contains Summary, Spending Detail, Spending by Category, Earning Detail, Investment Detail in order, plus an optional Needs-Categorization section iff un-categorized merchants exist and an optional Conflicts section iff a restated transaction exists this month (ADR-8). Schemas/currencies as in Outputs.
+- AC9: The report contains Summary, Spending Detail, Spending by Category, Earning Detail, Investment Detail in order, plus an optional Needs-Categorization section iff un-categorized merchants exist and an optional Conflicts section iff a restated transaction exists this month (ADR-8). Schemas/currencies as in Outputs; the Summary carries a **Net** column (Earned + Spent) between Spent and Portfolio Δ.
 - AC10: Converted figures use the `fx_rates` row whose `date` = the report's month-end (ADR-5); fetched+persisted if absent. Fixture: one foreign-currency account, regenerate the same month on two calendar days → identical converted output.
 - AC11: Debits negative, credits positive; no amount+type split. Verified by MIN/MAX(amount).
 - AC12: Every transaction has non-null account_id via the FK chain; no orphans. Statements failing resolution are unresolved_account with zero transactions. Verified by LEFT JOIN.
