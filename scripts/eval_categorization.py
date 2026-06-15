@@ -17,6 +17,12 @@ The labels file is your REAL data, so it lives under the gitignored ``data/``
 
 Only the LLM tier is exercised (the rule/cache tiers are bypassed) so the number
 reflects the model itself. The category vocabulary comes from config/categories.yaml.
+
+Besides overall accuracy it reports **junk-drawer false positives**: how often a
+merchant whose expected category is NOT a fee/tax bucket got filed under one anyway
+(the "Fees & Charges"/"Taxes" catch-all failure the merchants review exposed). When
+A/B-testing a prompt change, that number is the one to drive down without losing
+accuracy.
 """
 
 from __future__ import annotations
@@ -30,6 +36,13 @@ from cruzar.config import load_config
 
 _ROOT = Path(__file__).resolve().parents[1]
 _DEFAULT_LABELS = _ROOT / "data" / "eval" / "categorization.csv"
+
+
+def _is_junk_drawer(category: str) -> bool:
+    """The fee/tax catch-all buckets a non-fee/non-tax merchant should never land in.
+    Matched by name so it tracks config/categories.yaml without a hardcoded list."""
+    name = category.lower()
+    return "fee" in name or "tax" in name
 
 
 def main(argv: list[str]) -> int:
@@ -54,6 +67,7 @@ def main(argv: list[str]) -> int:
 
     hits = 0
     misses: list[tuple[str, str, str, float]] = []
+    junk_fps: list[tuple[str, str, str, float]] = []
     for row in rows:
         description = (row.get("description") or "").strip()
         expected = (row.get("expected_category") or "").strip()
@@ -69,9 +83,17 @@ def main(argv: list[str]) -> int:
             hits += 1
         else:
             misses.append((description, expected, got, confidence))
+        # A normal merchant (expected NOT a fee/tax bucket) filed under one anyway.
+        if _is_junk_drawer(got) and not _is_junk_drawer(expected):
+            junk_fps.append((description, expected, got, confidence))
 
     total = len(rows)
     print(f"model: {config.llm.model}   examples: {total}   accuracy: {hits}/{total} = {hits / total:.1%}")
+    print(f"junk-drawer false positives (non-fee/tax filed under Fees/Taxes): {len(junk_fps)}/{total}")
+    if junk_fps:
+        print("\njunk-drawer FPs  (description | expected | got | confidence):")
+        for description, expected, got, confidence in junk_fps:
+            print(f"  {description!r} | {expected} | {got} | {confidence:.2f}")
     if misses:
         print("\nmisses  (description | expected | got | confidence):")
         for description, expected, got, confidence in misses:
