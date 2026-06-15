@@ -214,7 +214,7 @@ def ingest_inbox(
 
         try:
             parser = get_parser(account["institution"])
-            statement = parser(pdf_path)
+            result = parser(pdf_path)
         except ExtractionFallback as fallback:
             # AC4a: structured parse recovered <50% of columns. Hand the raw text to
             # the LLM extractor (ADR-2). No extractor (LLM disabled) or an unusable
@@ -226,7 +226,7 @@ def ingest_inbox(
                 failed += 1
                 continue
             try:
-                statement = extractor.extract(fallback.text)
+                result = extractor.extract(fallback.text)
                 logger.info("LLM extraction fallback for %s", pdf_path.name)
             except LlmError:
                 logger.error("LLM extraction failed, skipping %s", pdf_path.name)
@@ -246,29 +246,37 @@ def ingest_inbox(
             failed += 1
             continue
 
-        # statement period+account dedup (ADR-7): skip if already present.
-        dupe = conn.execute(
-            "SELECT id FROM statements WHERE account_id = ? AND period_start = ? "
-            "AND period_end = ?",
-            (account["id"], statement.period_start.isoformat(),
-             statement.period_end.isoformat()),
-        ).fetchone()
-        if dupe is not None:
-            logger.debug("statement period already ingested, skipping %s", pdf_path.name)
-            _record_file(conn, file_hash, pdf_path.name, "ok", dupe["id"])
-            conn.commit()
-            skipped += 1
-            continue
-
+        # A parser may return one statement or several (a stacked multi-month export →
+        # one per section, plan 023). Persist each; per-(account, period) dedup (ADR-7)
+        # skips sections already present — so re-uploading a single month that overlaps
+        # a combined statement adds nothing.
+        statements = result if isinstance(result, list) else [result]
         try:
-            # Statement first, then the processed_files row points at it
-            # (processed_files.statement_id -> statements). One-directional FK,
-            # no cycle, no backfill.
-            statement_id = persist_statement(conn, account["id"], statement)
-            _record_file(conn, file_hash, pdf_path.name, "ok", statement_id)
+            last_statement_id: int | None = None
+            new_count = 0
+            for statement in statements:
+                dupe = conn.execute(
+                    "SELECT id FROM statements WHERE account_id = ? AND period_start = ? "
+                    "AND period_end = ?",
+                    (account["id"], statement.period_start.isoformat(),
+                     statement.period_end.isoformat()),
+                ).fetchone()
+                if dupe is not None:
+                    last_statement_id = dupe["id"]
+                    continue
+                # Statement first, then the processed_files row points at it
+                # (processed_files.statement_id -> statements). One-directional FK,
+                # no cycle, no backfill.
+                last_statement_id = persist_statement(conn, account["id"], statement)
+                new_count += 1
+                logger.info("ingested %s (%s)", pdf_path.name, _ingest_summary(statement))
+            _record_file(conn, file_hash, pdf_path.name, "ok", last_statement_id)
             conn.commit()
-            logger.info("ingested %s (%s)", pdf_path.name, _ingest_summary(statement))
-            ingested += 1
+            if new_count:
+                ingested += 1
+            else:
+                logger.debug("all statement periods already ingested, skipping %s", pdf_path.name)
+                skipped += 1
         except Exception:
             conn.rollback()
             _record_file(conn, file_hash, pdf_path.name, "parse_failed", None)

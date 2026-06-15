@@ -1,9 +1,9 @@
 """AC8 (ActivoBank multi-section): a single PDF of several stacked monthly sections
-parses into ONE combined ParsedStatement (plan 019). Parsing the synthetic two-section
-fixture reproduces its oracle exactly, and the structural claims hold: both sections
-captured with continuous seq, both VENCIMENTO credits signed +, the period spans the
-first section's start to the last's end, the closing balance is the last section's
-SALDO FINAL, and each section's dates resolve against its own month (across a year).
+parses into ONE ParsedStatement PER section (plan 023). Parsing the synthetic
+two-section fixture reproduces its oracle exactly, and the structural claims hold: each
+section is its own statement with its own period, its own SALDO FINAL as closing
+balance, seq reset to 1..n, both VENCIMENTO credits signed +, and dates resolved against
+that section's own month (across a year boundary).
 """
 
 from __future__ import annotations
@@ -38,30 +38,37 @@ def _serialize(statement: ParsedStatement) -> dict[str, object]:
 
 def test_ac08_activobank_multisection_has_fixture() -> None:
     expected = json.loads((FIXTURE_DIR / "expected.json").read_text(encoding="utf-8"))
-    statement = parse(FIXTURE_DIR / "statement.pdf")
-    assert _serialize(statement) == expected
+    statements = parse(FIXTURE_DIR / "statement.pdf")
+    assert [_serialize(s) for s in statements] == expected
 
 
-def test_ac08_activobank_multisection_combines_sections() -> None:
-    statement = parse(FIXTURE_DIR / "statement.pdf")
+def test_ac08_activobank_multisection_one_statement_per_section() -> None:
+    statements = parse(FIXTURE_DIR / "statement.pdf")
 
-    # Both sections captured into one statement, continuous seq across them (ADR-11).
-    assert [t.intra_statement_seq for t in statement.transactions] == [1, 2, 3, 4]
-    # Period spans the first section's start to the LAST section's end (D1).
-    assert statement.period_start.isoformat() == "2025-12-02"
-    assert statement.period_end.isoformat() == "2026-01-30"
-    # Closing balance is the last section's SALDO FINAL, not the first's (D1).
-    assert statement.closing_balance == Decimal("5700.00")
+    # One statement per monthly section (plan 023), in document order.
+    assert len(statements) == 2
+    dec, jan = statements
 
-    # BOTH monthly salaries present and signed positive (the bug dropped section 2's).
-    vencimentos = [t for t in statement.transactions if "VENCIMENTO" in t.description_raw]
-    assert [t.amount for t in vencimentos] == [Decimal("2000.00"), Decimal("3000.00")]
+    # Each section keeps its OWN period, SALDO FINAL, and seq reset to 1..n.
+    assert dec.period_start.isoformat() == "2025-12-02"
+    assert dec.period_end.isoformat() == "2025-12-30"
+    assert dec.closing_balance == Decimal("2900.00")
+    assert [t.intra_statement_seq for t in dec.transactions] == [1, 2]
+    assert jan.period_start.isoformat() == "2026-01-02"
+    assert jan.period_end.isoformat() == "2026-01-30"
+    assert jan.closing_balance == Decimal("5700.00")
+    assert [t.intra_statement_seq for t in jan.transactions] == [1, 2]
 
-    # Each section's M.DD dates resolve against ITS OWN period — section 1 is 2025,
-    # section 2 is 2026, exact across the year boundary (D4).
-    by_seq = {t.intra_statement_seq: t for t in statement.transactions}
-    assert by_seq[1].date.year == 2025 and by_seq[3].date.year == 2026
+    # BOTH monthly salaries present and signed positive (the 019 bug dropped section 2's).
+    assert dec.transactions[0].amount == Decimal("2000.00")
+    assert jan.transactions[0].amount == Decimal("3000.00")
+    assert "VENCIMENTO" in dec.transactions[0].description_raw
+    assert "VENCIMENTO" in jan.transactions[0].description_raw
 
-    # Balance identity over the combined statement (saldo_inicial 1000.00).
-    total = sum((t.amount for t in statement.transactions), Decimal("0"))
-    assert Decimal("1000.00") + total == statement.closing_balance
+    # Each section's M.DD dates resolve against ITS OWN period across the year boundary.
+    assert dec.transactions[0].date.year == 2025
+    assert jan.transactions[0].date.year == 2026
+
+    # Per-section balance identity: section 1 opens at 1000.00, section 2 at its close.
+    assert Decimal("1000.00") + sum((t.amount for t in dec.transactions), Decimal("0")) == dec.closing_balance
+    assert dec.closing_balance + sum((t.amount for t in jan.transactions), Decimal("0")) == jan.closing_balance

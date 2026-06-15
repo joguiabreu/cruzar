@@ -262,9 +262,10 @@ Adding a new account is a **YAML edit only** (SPEC AC7) — no code change —
 
 > **ActivoBank multi-month exports:** a single PDF that stacks several monthly
 > sections (each with its own `EXTRATO DE … A …`, `SALDO INICIAL/FINAL`, and salary)
-> is parsed as one combined statement — every section's transactions are captured,
-> the period spans the first section's start to the last's end, and the closing
-> balance is the last section's. A single-month statement is just the one-section case.
+> is parsed into **one statement per month** — each keeps its own period and closing
+> balance, so month-by-month Net Worth is correct and re-uploading one of those months
+> later is recognised as a duplicate (not added twice). A single-month statement is
+> just the one-section case.
 
 > **Investment accounts** (`account_type: brokerage`/`retirement`) capture an
 > immutable `holdings_snapshot` from the statement's positions (each holding in its

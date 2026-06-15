@@ -19,6 +19,12 @@ existing single-section fixture + all conftest-based tests stay untouched.
 
 ## Decisions (settled)
 
+> **SUPERSEDED by [plan 023](plan_023_activobank_per_section_statements.md):** D1 below
+> (one combined statement) broke per-month Net Worth — a single statement exposes only
+> the last month's closing balance. Plan 023 emits **one statement per section** instead.
+> 019's section discovery, per-section date resolution, and header/noise-row robustness
+> all stand; only the final assembly changed.
+
 1. **D1 — combined-statement semantics.** The whole file is ONE `ParsedStatement`
    (ADR-11, top-to-bottom): `period_start` = first section's start, `period_end` = last
    section's end; `closing_balance` = the *last* section's `SALDO FINAL`;

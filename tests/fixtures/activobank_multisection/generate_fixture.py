@@ -163,15 +163,16 @@ def build() -> None:
     c.showPage()
     c.save()
 
-    # Oracle: continuous seq across sections; closing = last section's SALDO FINAL.
-    transactions: list[dict[str, object]] = []
-    seq = 0
-    closing = SECTIONS[-1].saldo_inicial + sum(
-        (a for _, _, a in SECTIONS[-1].transactions), Decimal("0")
-    )
+    # Oracle: ONE statement per section (plan 023). Each has its own period, its own
+    # SALDO FINAL as closing_balance, and intra_statement_seq reset to 1..n within it.
+    expected: list[dict[str, object]] = []
+    total_txns = 0
     for section in SECTIONS:
-        for posting_date, description, amount in section.transactions:
-            seq += 1
+        closing = section.saldo_inicial + sum(
+            (a for _, _, a in section.transactions), Decimal("0")
+        )
+        transactions: list[dict[str, object]] = []
+        for seq, (posting_date, description, amount) in enumerate(section.transactions, start=1):
             transactions.append(
                 {
                     "intra_statement_seq": seq,
@@ -180,15 +181,18 @@ def build() -> None:
                     "description_raw": description,
                 }
             )
-    expected = {
-        "currency": "EUR",
-        "period_start": SECTIONS[0].period_start.isoformat(),
-        "period_end": SECTIONS[-1].period_end.isoformat(),
-        "closing_balance": str(closing),
-        "transactions": transactions,
-    }
+        total_txns += len(transactions)
+        expected.append(
+            {
+                "currency": "EUR",
+                "period_start": section.period_start.isoformat(),
+                "period_end": section.period_end.isoformat(),
+                "closing_balance": str(closing),
+                "transactions": transactions,
+            }
+        )
     (HERE / "expected.json").write_text(json.dumps(expected, indent=2) + "\n", encoding="utf-8")
-    print(f"wrote {pdf_path.name} and expected.json; {seq} txns, closing {closing}")
+    print(f"wrote {pdf_path.name} and expected.json; {len(expected)} statements, {total_txns} txns")
 
 
 if __name__ == "__main__":

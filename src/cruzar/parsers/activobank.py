@@ -112,7 +112,13 @@ def _find_sections(rows: list[list[dict[str, Any]]]) -> list[_Section]:
     return sections
 
 
-def parse(pdf_path: str | Path) -> ParsedStatement:
+def parse(pdf_path: str | Path) -> list[ParsedStatement]:
+    """Parse an ActivoBank export into ONE ParsedStatement PER monthly section (plan
+    023). A single-month statement yields a one-element list; a stacked multi-month
+    export yields one statement per ``SALDO INICIAL … SALDO FINAL`` section, each with
+    its own period, closing balance, and per-section ``intra_statement_seq``. Keeping
+    months as distinct statements is what makes per-month Net Worth (ADR-16) and
+    overlapping-upload dedup (ADR-7) correct."""
     with pdfplumber.open(pdf_path) as pdf:
         all_text = "\n".join(page.extract_text() or "" for page in pdf.pages)
         # Cluster rows PER page (tops are page-relative) and concatenate in page order
@@ -148,9 +154,12 @@ def parse(pdf_path: str | Path) -> ParsedStatement:
         if resolved / len(candidates) < _MIN_COLUMN_RESOLUTION:
             raise ExtractionFallback(all_text)
 
-    transactions: list[ParsedTransaction] = []
-    seq = 0
+    statements: list[ParsedStatement] = []
     for sec in sections:
+        # Each section is its own statement: period + closing from the section, and
+        # intra_statement_seq reset to 1..n within it (plan 023 D2).
+        transactions: list[ParsedTransaction] = []
+        seq = 0
         for row in rows[sec.start_idx + 1 : sec.end_idx]:
             date_token = _row_date_token(row)
             if date_token is None:
@@ -182,23 +191,22 @@ def parse(pdf_path: str | Path) -> ParsedStatement:
                     description_raw=description,
                 )
             )
+        if not transactions:
+            raise ActivoBankParseError(f"no transactions parsed in section {sec.period_start}")
+        closing_balance = _column_amount(rows[sec.end_idx], "saldo")
+        if closing_balance is None:
+            raise ActivoBankParseError(f"missing SALDO FINAL balance in section {sec.period_start}")
+        statements.append(
+            ParsedStatement(
+                currency="EUR",
+                period_start=sec.period_start,
+                period_end=sec.period_end,
+                closing_balance=closing_balance,
+                transactions=transactions,
+            )
+        )
 
-    if not transactions:
-        raise ActivoBankParseError("no transactions parsed")
-
-    # Combined statement (plan 019 D1): period spans the first section's start to the
-    # last section's end; the closing balance is the LAST section's SALDO FINAL.
-    closing_balance = _column_amount(rows[sections[-1].end_idx], "saldo")
-    if closing_balance is None:
-        raise ActivoBankParseError("missing SALDO FINAL balance")
-
-    return ParsedStatement(
-        currency="EUR",
-        period_start=sections[0].period_start,
-        period_end=sections[-1].period_end,
-        closing_balance=closing_balance,
-        transactions=transactions,
-    )
+    return statements
 
 
 def _column_amount(row: list[dict[str, Any]], column: str) -> Decimal | None:
