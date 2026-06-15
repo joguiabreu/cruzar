@@ -54,25 +54,38 @@ def _norm(s: str) -> str:
     return s.replace(" ", "").lower()
 
 
-def main() -> int:
-    root = repo_root()
+def load_denylist(root: Path) -> list[tuple[str, str]] | None:
+    """The (raw, normalized) denylist terms, or None if no ``.pii-denylist`` exists.
+    Shared by the staged-file guard and the commit-message guard."""
     denylist = root / ".pii-denylist"
     if not denylist.exists():
+        return None
+    terms = [
+        line.strip()
+        for line in denylist.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    return [(t, _norm(t)) for t in terms]
+
+
+def text_hits_denylist(text: str, norm_terms: list[tuple[str, str]]) -> bool:
+    """True if any denylist term appears in ``text`` (space-insensitive for numbers)."""
+    ntext = _norm(text)
+    return any(raw in text or (nt and nt in ntext) for raw, nt in norm_terms)
+
+
+def main() -> int:
+    root = repo_root()
+    norm_terms = load_denylist(root)
+    if norm_terms is None:
         print(
             "pii-guard: no .pii-denylist found; PII scanning disabled. "
             "Create one (it is gitignored) to enable.",
             file=sys.stderr,
         )
         return 0
-
-    terms = [
-        line.strip()
-        for line in denylist.read_text(encoding="utf-8").splitlines()
-        if line.strip() and not line.lstrip().startswith("#")
-    ]
-    if not terms:
+    if not norm_terms:
         return 0
-    norm_terms = [(t, _norm(t)) for t in terms]
 
     violations: list[str] = []
     for path in staged_files():
@@ -80,12 +93,9 @@ def main() -> int:
         text = data.decode("utf-8", errors="ignore")
         if path.lower().endswith(".pdf"):
             text = f"{text}\n{extract_pdf_text(data)}"
-        ntext = _norm(text)
-        for raw, nt in norm_terms:
-            if raw in text or (nt and nt in ntext):
-                # Never echo the secret itself — only where it was found.
-                violations.append(path)
-                break
+        if text_hits_denylist(text, norm_terms):
+            # Never echo the secret itself — only where it was found.
+            violations.append(path)
 
     if violations:
         print("pii-guard: BLOCKED — a .pii-denylist value appears in staged files:", file=sys.stderr)

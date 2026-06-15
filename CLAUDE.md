@@ -132,10 +132,12 @@ product behavior, `docs/SPEC.md` wins; ask before deviating from either.
   placeholder names/refs) so a leaked real figure stands out instead of blending
   in. Names AND figures AND reference strings — redaction that only catches
   names is the judgment gap that lets a salary slip through.
-- A deterministic pre-commit guard (`.githooks/check_pii.py`, terms in gitignored
-  `.pii-denylist`) blocks staging any real value; it scans figures + account
-  numbers space-insensitively, not just names. **A fresh clone must opt in:**
-  `git config core.hooksPath .githooks`. This guard, not eyeballing, is the
+- Deterministic guards (terms in gitignored `.pii-denylist`) block any real value
+  from being committed, scanning figures + account numbers space-insensitively, not
+  just names: `pre-commit` → `.githooks/check_pii.py` scans staged file content
+  (incl. PDF text); `commit-msg` → `.githooks/check_commit_msg.py` scans the commit
+  MESSAGE (don't put a real balance in a message either). **A fresh clone must opt
+  in:** `git config core.hooksPath .githooks`. These guards, not eyeballing, are the
   durable defense.
 - Acceptance tests are named for the AC they verify
   (`test_ac03_no_duplicate_content_hash`, `test_ac20_portfolio_delta_nets_contributions`, …).
