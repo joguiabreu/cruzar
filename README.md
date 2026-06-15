@@ -199,7 +199,9 @@ generated Markdown (placeholder data shown):
 ```
 
 **Summary** (Section 1) is in EUR: one row per month (last 12, newest first),
-computed as of each month-end. **Earned/Spent** are cash-account flows and **Net**
+computed as of each month-end — except the current, in-progress month, which is
+valued as-of **today** (its month-end is in the future, where no exchange rate
+exists yet). **Earned/Spent** are cash-account flows and **Net**
 is their sum — the cash you kept that month (negative when you spent more than you
 earned). **Net Worth** sums cash balances + holdings value across accounts, converting foreign
 holdings at the month-end rate (see [FX rates](#fx-rates)). **Portfolio Δ** is
@@ -355,8 +357,11 @@ it only proposes labels (ADR-1/2).
 ## FX rates
 
 Foreign-currency holdings (e.g. a USD stock in an EUR account) are converted to the
-base currency at the **period-end rate** (ADR-5). A month-end rate is **fetched once
-and persisted**, then reused — so regenerating a past month is reproducible.
+base currency at the **valuation-date rate** (ADR-5): a month's month-end, but never
+later than today (`min(month_end, today)`). For the in-progress month that means
+today's rate — a future month-end has none yet. A rate is **fetched once and
+persisted**, then reused — so regenerating a *past* month is reproducible (the
+in-progress month tracks today, so it can change day to day).
 
 This is the **only external network call** Cruzar makes. It sends just a currency
 pair and a date — **never any financial data** — and after the first fetch the rate

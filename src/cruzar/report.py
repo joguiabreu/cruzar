@@ -46,12 +46,13 @@ def _cell(compute: Callable[[], Decimal], *, what: str, ym: str) -> str:
 
 
 def _delta_cell(
-    conn: sqlite3.Connection, ym: str, patterns: list[str], *, fetch: Fetcher | None
+    conn: sqlite3.Connection, ym: str, patterns: list[str], *, fetch: Fetcher | None,
+    today: date | None = None,
 ) -> str:
     """Portfolio Δ (ADR-14): '—' when no prior snapshot, the gross flag when
     contributions are undetected, and 'n/a' if its FX rate is unavailable."""
     try:
-        delta = metrics.portfolio_delta(conn, ym, patterns=patterns, fetch=fetch)
+        delta = metrics.portfolio_delta(conn, ym, patterns=patterns, fetch=fetch, today=today)
     except FxError:
         logger.warning("FX unavailable for %s Portfolio Δ; rendering 'n/a'", ym)
         return "n/a"
@@ -69,6 +70,7 @@ def _summary_section(
     patterns: list[str],
     *,
     fetch: Fetcher | None,
+    today: date | None = None,
 ) -> list[str]:
     rows = [m for m in all_months if m <= up_to][:_SUMMARY_MONTHS]  # all_months is desc
     lines = [
@@ -78,13 +80,13 @@ def _summary_section(
         "| --- | --- | --- | --- | --- | --- |",
     ]
     for ym in rows:
-        end = metrics.month_end(ym)
-        earned = _cell(partial(metrics.earned, conn, ym, fetch=fetch), what="Earned", ym=ym)
-        spent = _cell(partial(metrics.spent, conn, ym, fetch=fetch), what="Spent", ym=ym)
-        net = _cell(partial(metrics.net, conn, ym, fetch=fetch), what="Net", ym=ym)
-        delta = _delta_cell(conn, ym, patterns, fetch=fetch)
+        on = metrics.as_of(ym, today)  # month-end, capped at today for the in-progress month
+        earned = _cell(partial(metrics.earned, conn, ym, fetch=fetch, today=today), what="Earned", ym=ym)
+        spent = _cell(partial(metrics.spent, conn, ym, fetch=fetch, today=today), what="Spent", ym=ym)
+        net = _cell(partial(metrics.net, conn, ym, fetch=fetch, today=today), what="Net", ym=ym)
+        delta = _delta_cell(conn, ym, patterns, fetch=fetch, today=today)
         net_worth = _cell(
-            partial(metrics.net_worth, conn, end, fetch=fetch), what="Net Worth", ym=ym
+            partial(metrics.net_worth, conn, on, fetch=fetch), what="Net Worth", ym=ym
         )
         lines.append(f"| {ym} | {earned} | {spent} | {net} | {delta} | {net_worth} |")
     lines.append("")
@@ -124,14 +126,15 @@ def _spending_section(conn: sqlite3.Connection, year_month: str) -> list[str]:
 
 
 def _spending_by_category_section(
-    conn: sqlite3.Connection, year_month: str, *, fetch: Fetcher | None
+    conn: sqlite3.Connection, year_month: str, *, fetch: Fetcher | None,
+    today: date | None = None,
 ) -> list[str]:
     """This month's cash spending grouped by category, in EUR (ADR-5) — the rows sum
-    to the Summary's Spent. Degrades to an 'n/a' note if a month-end rate is missing,
+    to the Summary's Spent. Degrades to an 'n/a' note if the as_of rate is missing,
     like the Summary cells (SPEC FX degradation)."""
     lines = ["## Spending by Category", "", "| Category | Spent (EUR) |", "| --- | --- |"]
     try:
-        rows = metrics.spending_by_category(conn, year_month, fetch=fetch)
+        rows = metrics.spending_by_category(conn, year_month, fetch=fetch, today=today)
     except FxError:
         logger.warning("FX unavailable for %s Spending by Category; rendering 'n/a'", year_month)
         lines += ["| _FX rate unavailable_ | n/a |", ""]
@@ -312,17 +315,22 @@ def write_reports(
     *,
     investment_flow_patterns: list[str] | None = None,
     fetch: Fetcher | None = None,
+    today: date | None = None,
 ) -> None:
     patterns = investment_flow_patterns or []
+    today = today or date.today()
     reports_dir.mkdir(parents=True, exist_ok=True)
     months = metrics.months_available(conn)
     for year_month in months:
+        # Value the in-progress month as-of today, not its future month-end (ADR-5/16):
+        # a future date has no FX rate, which would degrade every converted cell to n/a.
+        on = metrics.as_of(year_month, today)
         lines = [f"# Cruzar — {year_month}", ""]
-        lines += _summary_section(conn, year_month, months, patterns, fetch=fetch)
+        lines += _summary_section(conn, year_month, months, patterns, fetch=fetch, today=today)
         lines += _spending_section(conn, year_month)
-        lines += _spending_by_category_section(conn, year_month, fetch=fetch)
+        lines += _spending_by_category_section(conn, year_month, fetch=fetch, today=today)
         lines += _earning_section(conn, year_month)
-        lines += _investment_section(conn, metrics.month_end(year_month), fetch=fetch)
+        lines += _investment_section(conn, on, fetch=fetch)
         lines += _needs_categorization_section(conn, year_month)
         lines += _conflicts_section(conn, year_month)
         (reports_dir / f"cruzar-{year_month}.md").write_text(

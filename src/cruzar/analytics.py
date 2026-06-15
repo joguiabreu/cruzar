@@ -202,14 +202,16 @@ def _merge(per_month: list[list[tuple[str, Decimal]]]) -> dict[str, Decimal]:
 
 
 def _resolve_as_of(conn: sqlite3.Connection, as_of: str | None, today: date) -> date:
+    # Never value past `today`: the in-progress month's month-end is in the future,
+    # where no FX rate exists (ADR-5/16). Cap every resolved date at `today`.
     if as_of:
         if len(as_of) == 10:  # YYYY-MM-DD
-            return date.fromisoformat(as_of)
-        return metrics.month_end(as_of)  # YYYY-MM
+            return min(date.fromisoformat(as_of), today)
+        return min(metrics.month_end(as_of), today)  # YYYY-MM
     available = metrics.months_available(conn)
     if available:
-        return metrics.month_end(available[0])  # latest month with data
-    return metrics.month_end(f"{today.year:04d}-{today.month:02d}")
+        return min(metrics.month_end(available[0]), today)  # latest month with data
+    return min(metrics.month_end(f"{today.year:04d}-{today.month:02d}"), today)
 
 
 def run(
@@ -226,23 +228,23 @@ def run(
     if isinstance(spec, (SpendTotal, IncomeTotal)):
         start, end = resolve_period(spec.period, today)
         fn = metrics.spent if isinstance(spec, SpendTotal) else metrics.earned
-        total = sum((fn(conn, ym, fetch=fetch) for ym in _months(start, end)), Decimal(0))
+        total = sum((fn(conn, ym, fetch=fetch, today=today) for ym in _months(start, end)), Decimal(0))
         return QueryResult(spec.metric, period=(start, end), scalar=total)
 
     if isinstance(spec, SpendByCategory):
         start, end = resolve_period(spec.period, today)
-        merged = _merge([metrics.spending_by_category(conn, ym, fetch=fetch) for ym in _months(start, end)])
+        merged = _merge([metrics.spending_by_category(conn, ym, fetch=fetch, today=today) for ym in _months(start, end)])
         return _grouped_result(spec.metric, merged, start, end, spec.categories, spec.top, ascending=True)
 
     if isinstance(spec, SpendByMerchant):
         start, end = resolve_period(spec.period, today)
-        merged = _merge([metrics.spending_by_merchant(conn, ym, fetch=fetch) for ym in _months(start, end)])
+        merged = _merge([metrics.spending_by_merchant(conn, ym, fetch=fetch, today=today) for ym in _months(start, end)])
         subjects = [spec.merchant] if spec.merchant else None
         return _grouped_result(spec.metric, merged, start, end, subjects, spec.top, ascending=True)
 
     if isinstance(spec, IncomeBySource):
         start, end = resolve_period(spec.period, today)
-        merged = _merge([metrics.income_by_source(conn, ym, fetch=fetch) for ym in _months(start, end)])
+        merged = _merge([metrics.income_by_source(conn, ym, fetch=fetch, today=today) for ym in _months(start, end)])
         return _grouped_result(spec.metric, merged, start, end, None, spec.top, ascending=False)
 
     if isinstance(spec, NetWorth):
@@ -253,7 +255,7 @@ def run(
     if isinstance(spec, NetWorthTrend):
         start, end = resolve_period(spec.period, today)
         series = [
-            (ym, metrics.net_worth(conn, metrics.month_end(ym), fetch=fetch))
+            (ym, metrics.net_worth(conn, metrics.as_of(ym, today), fetch=fetch))
             for ym in _months(start, end)
         ]
         return QueryResult(spec.metric, period=(start, end), series=series)
@@ -262,7 +264,7 @@ def run(
         start, end = resolve_period(spec.period, today)
         total, flagged, any_value = Decimal(0), False, False
         for ym in _months(start, end):
-            delta = metrics.portfolio_delta(conn, ym, patterns=patterns, fetch=fetch)
+            delta = metrics.portfolio_delta(conn, ym, patterns=patterns, fetch=fetch, today=today)
             if delta is not None:
                 total += delta.value
                 flagged = flagged or delta.flagged
