@@ -10,6 +10,7 @@ credits positive. A parse failure raises — nothing partial is ever returned
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -32,10 +33,25 @@ _CREDIT_SALDO_BOUND = 493.0  # center < this => CREDITO, else SALDO
 _DATE_X0_MAX = 110.0  # the two date columns sit left of this
 
 _PERIOD_RE = re.compile(r"EXTRATO DE (\d{4}/\d{2}/\d{2}) A (\d{4}/\d{2}/\d{2})")
+# A transaction's posting date in the left columns, e.g. '5.07' / '12.30'. Used to
+# tell a real transaction row from a reprinted column header ('LANC.VALOR … DEBITO')
+# or OCR-noise row that a multi-page section interleaves (it has no M.DD date token).
+_DATE_TOKEN_RE = re.compile(r"^\d{1,2}\.\d{2}$")
 
 
 class ActivoBankParseError(ParserError):
     """Raised when the ActivoBank statement layout cannot be parsed."""
+
+
+def _row_date_token(row: list[dict[str, Any]]) -> str | None:
+    """The row's posting-date token (M.DD) from the left date columns, or None if the
+    row carries none — i.e. it is not a transaction line (a header, SALDO marker, or
+    wrapped continuation). Scans for the M.DD shape so a leading OCR-noise token
+    (e.g. 'soruE') doesn't shadow the real date."""
+    for w in row:
+        if w["x0"] < _DATE_X0_MAX and _DATE_TOKEN_RE.match(w["text"]):
+            return w["text"]
+    return None
 
 
 def _to_decimal(tokens: list[str]) -> Decimal:
@@ -48,7 +64,7 @@ def _to_decimal(tokens: list[str]) -> Decimal:
 
 
 def _infer_year(month: int, period_start: date, period_end: date) -> int:
-    """Resolve the year for a M.DD transaction date across a period boundary."""
+    """Resolve the year for a M.DD transaction date against ITS section's period."""
     if month == period_start.month:
         return period_start.year
     if month == period_end.month:
@@ -57,46 +73,70 @@ def _infer_year(month: int, period_start: date, period_end: date) -> int:
     return period_start.year if month >= period_start.month else period_end.year
 
 
+@dataclass(frozen=True)
+class _Section:
+    """One ``SALDO INICIAL … SALDO FINAL`` block within a (possibly multi-month)
+    statement, with the period from the ``EXTRATO DE … A …`` line that heads it. A
+    single-month statement is the degenerate one-section case (ADR-11)."""
+
+    start_idx: int  # index of the SALDO INICIAL row in the combined row list
+    end_idx: int  # index of the SALDO FINAL row
+    period_start: date
+    period_end: date
+
+
+def _find_sections(rows: list[list[dict[str, Any]]]) -> list[_Section]:
+    """Walk the combined rows pairing each ``SALDO INICIAL`` with the next
+    ``SALDO FINAL`` (a section may span a page break), tagging each with the period
+    from the most-recent ``EXTRATO DE`` line — so each section's dates resolve
+    against its OWN month, exact even across a year boundary (plan 019 D4)."""
+    sections: list[_Section] = []
+    current_period: tuple[date, date] | None = None
+    start_idx: int | None = None
+    section_period: tuple[date, date] | None = None
+    for i, row in enumerate(rows):
+        text = row_text(row)
+        match = _PERIOD_RE.search(text)
+        if match is not None:
+            current_period = (
+                date.fromisoformat(match.group(1).replace("/", "-")),
+                date.fromisoformat(match.group(2).replace("/", "-")),
+            )
+        if "SALDO INICIAL" in text:
+            start_idx, section_period = i, current_period
+        elif "SALDO FINAL" in text and start_idx is not None:
+            if section_period is None:
+                raise ActivoBankParseError("section has no 'EXTRATO DE ... A ...' period")
+            sections.append(_Section(start_idx, i, section_period[0], section_period[1]))
+            start_idx, section_period = None, None
+    return sections
+
+
 def parse(pdf_path: str | Path) -> ParsedStatement:
     with pdfplumber.open(pdf_path) as pdf:
         all_text = "\n".join(page.extract_text() or "" for page in pdf.pages)
-        period_match = _PERIOD_RE.search(all_text)
-        if period_match is None:
-            raise ActivoBankParseError("could not locate 'EXTRATO DE ... A ...' period")
-        period_start = date.fromisoformat(period_match.group(1).replace("/", "-"))
-        period_end = date.fromisoformat(period_match.group(2).replace("/", "-"))
-
-        # The transaction table lives on the page carrying SALDO INICIAL/FINAL.
-        rows: list[list[dict[str, Any]]] | None = None
+        # Cluster rows PER page (tops are page-relative) and concatenate in page order
+        # into one sequence — a section can then span a page break (plan 019 D2).
+        rows: list[list[dict[str, Any]]] = []
         for page in pdf.pages:
-            words = page.extract_words()
-            text = " ".join(w["text"] for w in words)
-            if "INICIAL" in text and "FINAL" in text:
-                rows = cluster_rows(words)
-                break
-        if rows is None:
-            raise ActivoBankParseError("could not find transaction table page")
+            rows += cluster_rows(page.extract_words())
 
-    start_idx = end_idx = None
-    for i, row in enumerate(rows):
-        text = row_text(row)
-        if start_idx is None and "SALDO INICIAL" in text:
-            start_idx = i
-        elif "SALDO FINAL" in text:
-            end_idx = i
-            break
-    if start_idx is None or end_idx is None or end_idx <= start_idx:
+    sections = _find_sections(rows)
+    if not sections:
         raise ActivoBankParseError("could not bracket SALDO INICIAL .. SALDO FINAL")
 
     # AC4a degradation gate: of the candidate transaction rows (those carrying a
-    # date-column token), how many resolve an amount in a DEBITO/CREDITO column? A
-    # clean statement resolves ~all; a degenerate layout ~none. <50% (with at least
-    # one candidate) means pdfplumber lost the columns → hand the raw text to the LLM
-    # extractor instead of raising. Checked BEFORE closing_balance so a degraded
-    # statement falls back rather than tripping a generic "missing SALDO FINAL".
+    # date-column token) ACROSS ALL SECTIONS, how many resolve an amount in a
+    # DEBITO/CREDITO column? A clean statement resolves ~all; a degenerate layout
+    # ~none. <50% (with at least one candidate) means pdfplumber lost the columns →
+    # hand the raw text to the LLM extractor instead of raising. One decision over the
+    # whole statement, not per section (plan 019 D3). Checked BEFORE closing_balance so
+    # a degraded statement falls back rather than tripping a generic "missing SALDO".
     candidates = [
-        row for row in rows[start_idx + 1 : end_idx]
-        if any(w["x0"] < _DATE_X0_MAX for w in row)
+        row
+        for sec in sections
+        for row in rows[sec.start_idx + 1 : sec.end_idx]
+        if _row_date_token(row) is not None
     ]
     if candidates:
         resolved = sum(
@@ -108,51 +148,54 @@ def parse(pdf_path: str | Path) -> ParsedStatement:
         if resolved / len(candidates) < _MIN_COLUMN_RESOLUTION:
             raise ExtractionFallback(all_text)
 
-    closing_balance = _column_amount(rows[end_idx], "saldo")
-    if closing_balance is None:
-        raise ActivoBankParseError("missing SALDO FINAL balance")
-
     transactions: list[ParsedTransaction] = []
     seq = 0
-    for row in rows[start_idx + 1 : end_idx]:
-        date_tokens = [w["text"] for w in row if w["x0"] < _DATE_X0_MAX]
-        if not date_tokens:
-            continue  # not a transaction line (e.g. wrapped text)
-        debit = _column_amount(row, "debit")
-        credit = _column_amount(row, "credit")
-        if debit is None and credit is None:
-            continue
-        seq += 1
-        month_str, day_str = date_tokens[0].split(".")
-        month, day = int(month_str), int(day_str)
-        year = _infer_year(month, period_start, period_end)
-        posting_date = date(year, month, day)
-        if credit is not None:
-            amount = credit
-        else:
-            assert debit is not None
-            amount = -debit
-        description = " ".join(
-            w["text"]
-            for w in row
-            if _DATE_X0_MAX <= w["x0"] < _AMOUNT_X0_MIN
-        )
-        transactions.append(
-            ParsedTransaction(
-                intra_statement_seq=seq,
-                date=posting_date,
-                amount=amount,
-                description_raw=description,
+    for sec in sections:
+        for row in rows[sec.start_idx + 1 : sec.end_idx]:
+            date_token = _row_date_token(row)
+            if date_token is None:
+                continue  # not a transaction line (header, SALDO marker, wrapped text)
+            debit = _column_amount(row, "debit")
+            credit = _column_amount(row, "credit")
+            if debit is None and credit is None:
+                continue
+            seq += 1
+            month_str, day_str = date_token.split(".")
+            month, day = int(month_str), int(day_str)
+            year = _infer_year(month, sec.period_start, sec.period_end)
+            posting_date = date(year, month, day)
+            if credit is not None:
+                amount = credit
+            else:
+                assert debit is not None
+                amount = -debit
+            description = " ".join(
+                w["text"]
+                for w in row
+                if _DATE_X0_MAX <= w["x0"] < _AMOUNT_X0_MIN
             )
-        )
+            transactions.append(
+                ParsedTransaction(
+                    intra_statement_seq=seq,
+                    date=posting_date,
+                    amount=amount,
+                    description_raw=description,
+                )
+            )
 
     if not transactions:
         raise ActivoBankParseError("no transactions parsed")
 
+    # Combined statement (plan 019 D1): period spans the first section's start to the
+    # last section's end; the closing balance is the LAST section's SALDO FINAL.
+    closing_balance = _column_amount(rows[sections[-1].end_idx], "saldo")
+    if closing_balance is None:
+        raise ActivoBankParseError("missing SALDO FINAL balance")
+
     return ParsedStatement(
         currency="EUR",
-        period_start=period_start,
-        period_end=period_end,
+        period_start=sections[0].period_start,
+        period_end=sections[-1].period_end,
         closing_balance=closing_balance,
         transactions=transactions,
     )
