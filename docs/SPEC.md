@@ -339,7 +339,7 @@ Columns: Date | Account | Description | Amount (kept) | Amount (restated)
   2. Account-pair matching: an opposite-signed transaction of the same absolute amount on another tracked account within ±3 calendar days → mark BOTH `is_transfer = true` (symmetric).
      Step 3 (review appendix) deferred to v1.1. Residual: uncaught transfers leak into Earned/Spent — accepted.
 - ADR-16: **Net Worth** at month-end M = base-currency sum, over accounts not closed as of M, of `statements.closing_balance` (latest statement ≤ M per account) + Σ `holdings_snapshot.value` (latest snapshot ≤ M). Closed accounts are excluded from the most-recent row but remain in historical rows preceding their closed_at. For the **in-progress month** M is valued as-of today (`min(month_end, today)`, ADR-5) — its month-end is in the future where no FX rate exists; the snapshot/statement "≤" cutoff uses that same date.
-- ADR-17: **Conversational queries (`cruzar ask`) — the LLM plans, Python computes.** A free-form question is mapped by the local LLM to ONE entry in a bounded, typed query catalog (`QuerySpec`) — it selects a query and fills parameters (period, category, top-N); it never sums, converts, or authors a figure (ADR-1 stands). Python executes the query over `metrics`/`Decimal` and renders the answer from the computed result, so answers reconcile with the reports. Local model only (privacy); read-only (cached FX, like `report`). An unmappable question returns an honest capability message — never a fabricated answer; it is a reader, not an advisor. The catalog is the stable port: `cruzar ask` is the first adapter, an MCP server can be another over the same catalog. Not gated by an AC (a feature beyond the v1 spec scope); offline tests inject a fake planner, a live Ollama run is the gate.
+- ADR-17: **Conversational queries (`cruzar ask`) — the LLM plans, Python computes.** A free-form question is mapped by the local LLM to ONE entry in a bounded, typed query catalog (`QuerySpec`) — it selects a query and fills parameters (period, category, top-N); it never sums, converts, or authors a figure (ADR-1 stands). Python executes the query over `metrics`/`Decimal` and renders the answer from the computed result, so answers reconcile with the reports. Local model only (privacy); read-only (cached FX, like `report`). An unmappable question returns an honest capability message — never a fabricated answer; it is a reader, not an advisor. The catalog is the stable port: `cruzar ask` is the first adapter, an MCP server can be another over the same catalog. Periods resolve to inclusive **day** bounds (plan 025): flow queries (spend/income) honor day granularity — explicit `YYYY-MM-DD` windows, `last_n_days`, `this_month`, `last_month` — while point-in-time/series metrics (net worth, performance) stay month/snapshot-grained (no daily snapshots exist). FX still converts per-month at the as-of rate (ADR-5): a day window only clips which lines sum, so a full-month window reconciles with the month. **AC23** gates the deterministic half (`run(QuerySpec)` reconciles with the ledger); the non-deterministic NL→spec mapping is not gated by an AC — offline tests inject a fake planner, a live Ollama run is its gate.
 
 ### Conversational queries (`cruzar ask`)
 
@@ -347,8 +347,10 @@ Columns: Date | Account | Description | Amount (kept) | Amount (restated)
 the last 6 months?", "what was my main source of spending last year?", "how have my
 investments been going?". v1 catalog: total/by-category/by-merchant spending, total
 income / income by source, net worth (point-in-time or monthly trend), and investment
-performance (range Portfolio Δ) — each over a relative or explicit period. See ADR-17;
-design notes in `docs/design/query_planner.md`.
+performance (range Portfolio Δ) — each over a relative or explicit period. Spending and
+income answer at **day** granularity too: an explicit day window ("from the 10th to the
+30th of June" — e.g. a vacation), "the last 10 days", "this month", "last month". See
+ADR-17; design notes in `docs/design/query_planner.md`.
 
 ## Acceptance criteria
 
@@ -378,6 +380,7 @@ design notes in `docs/design/query_planner.md`.
 - AC20: Portfolio Δ = (IV_end − IV_prev) − NetContrib (ADR-14). Fixtures: (i) a contribution from checking→brokerage is subtracted (Δ unaffected by the transfer itself); (ii) an internal buy funded by existing cash leaves Δ unchanged; (iii) a price-only rise raises Δ by exactly that amount; (iv) no prior snapshot renders "—"; (v) an account that cannot emit cash flows (`emits_cash_flows=0`) yields a gross figure flagged "(gross — contributions undetected)" — the contribution is NOT subtracted.
 - AC21: A transfer pair (opposite-signed, equal magnitude, two tracked accounts, ±3 days) is excluded from both Earned and Spent and both legs carry is_transfer = true. Fixture.
 - AC22: Net Worth = Σ closing_balance + Σ holdings value over non-closed accounts at month-end (ADR-16). A closed account is excluded from the most-recent row but present in historical rows preceding closure. Fixture spanning the closure date.
+- AC23: Conversational queries reconcile with the ledger (ADR-17). For a seeded ledger, `analytics.run` over a `QuerySpec` returns figures equal to the independently-summed ledger total for the resolved period — across spend total, spend by category, spend by merchant, and income. Day-level periods: a full-month day-range equals the month total, an explicit day window sums only the in-window lines, and `last_month` resolves to the prior calendar month (never the current one or the next month's spending). Offline, driven through the catalog directly (no Ollama); the LLM's NL→spec mapping stays a live-run gate, not an AC.
 
 ## Edge cases & failure modes
 

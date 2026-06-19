@@ -40,15 +40,30 @@ class _FixedPlanner:
 
 def test_resolve_period_relative_and_explicit() -> None:
     today = date(2026, 6, 10)
-    assert analytics.resolve_period(Period(last_n_months=6), today) == ("2026-01", "2026-06")
-    assert analytics.resolve_period(Period(year=2025), today) == ("2025-01", "2025-12")
-    assert analytics.resolve_period(Period(this_year=True), today) == ("2026-01", "2026-06")
-    assert analytics.resolve_period(Period(last_n_years=1), today) == ("2025-07", "2026-06")
-    assert analytics.resolve_period(Period(start="2025-03", end="2025-05"), today) == ("2025-03", "2025-05")
-    assert analytics.resolve_period(Period(), today) == ("2025-07", "2026-06")  # default 12m
-    # Defensive: a reversed range using full YYYY-MM-DD (a real planner failure mode) is
-    # normalized to YYYY-MM and swapped, instead of silently resolving to zero months.
-    assert analytics.resolve_period(Period(start="2026-06-10", end="2025-06-10"), today) == ("2025-06", "2026-06")
+    d = date
+    # Month-grained inputs resolve to the month's first…last day (relatives end at today).
+    assert analytics.resolve_period(Period(last_n_months=6), today) == (d(2026, 1, 1), today)
+    assert analytics.resolve_period(Period(year=2025), today) == (d(2025, 1, 1), d(2025, 12, 31))
+    assert analytics.resolve_period(Period(this_year=True), today) == (d(2026, 1, 1), today)
+    assert analytics.resolve_period(Period(last_n_years=1), today) == (d(2025, 7, 1), today)
+    assert analytics.resolve_period(Period(start="2025-03", end="2025-05"), today) == (d(2025, 3, 1), d(2025, 5, 31))
+    assert analytics.resolve_period(Period(), today) == (d(2025, 7, 1), today)  # default 12m
+    # Defensive: a reversed explicit range is swapped, not silently resolved to nothing.
+    assert analytics.resolve_period(Period(start="2026-06-10", end="2025-06-10"), today) == (d(2025, 6, 10), d(2026, 6, 10))
+
+
+def test_resolve_period_day_level() -> None:
+    today = date(2026, 6, 19)
+    d = date
+    # Explicit day range (the vacation case) survives instead of widening to the month.
+    assert analytics.resolve_period(Period(start="2026-06-10", end="2026-06-30"), today) == (d(2026, 6, 10), d(2026, 6, 30))
+    # last_n_days is inclusive of today: 10 days back == today-9.
+    assert analytics.resolve_period(Period(last_n_days=10), today) == (d(2026, 6, 10), today)
+    # this_month = 1st → today; last_month = the WHOLE previous calendar month (the bug fix).
+    assert analytics.resolve_period(Period(this_month=True), today) == (d(2026, 6, 1), today)
+    assert analytics.resolve_period(Period(last_month=True), today) == (d(2026, 5, 1), d(2026, 5, 31))
+    # last_month across a year boundary.
+    assert analytics.resolve_period(Period(last_month=True), date(2026, 1, 15)) == (d(2025, 12, 1), d(2025, 12, 31))
 
 
 # --- data builders ------------------------------------------------------------------
@@ -214,6 +229,23 @@ def test_answer_renders_python_figure(tmp_path: Path) -> None:
         out = analytics.answer(conn, "whatever", planner=planner, today=date(2026, 6, 1), fetch=None)
         assert planner.calls == 1
         assert "€42.50" in out and "2026-01" in out
+    finally:
+        conn.close()
+
+
+def test_answer_renders_day_precise_span(tmp_path: Path) -> None:
+    """A day-window question renders the resolved ISO day bounds (D5), not the month."""
+    conn = connect(tmp_path / "dr.db")
+    try:
+        init_schema(conn)
+        acct = _account(conn, "Checking")
+        _txn(conn, _statement(conn, acct, "2026-06"), 1, "-12.00", None)  # mid-month (15th)
+        conn.commit()
+        planner = _FixedPlanner(
+            SpendTotal(metric="spend_total", period=Period(start="2026-06-10", end="2026-06-30"))
+        )
+        out = analytics.answer(conn, "vacation spend", planner=planner, today=date(2026, 7, 1), fetch=None)
+        assert "from 2026-06-10 to 2026-06-30" in out and "€12.00" in out
     finally:
         conn.close()
 

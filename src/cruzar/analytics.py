@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Annotated, Literal, Protocol, Union
 
@@ -32,14 +32,19 @@ _CENTS = Decimal("0.01")
 # --- the catalog (the port / tool contract) ----------------------------------------
 
 class Period(BaseModel):
-    """A time window. Either an explicit ``start``/``end`` (YYYY-MM) or a relative
-    descriptor; Python resolves relatives against ``today``. Default (all unset) is the
-    trailing 12 months."""
+    """A time window. Either explicit ``start``/``end`` (YYYY-MM or YYYY-MM-DD) or a
+    relative descriptor; Python resolves it to inclusive day bounds against ``today``
+    (the model never does the calendar math). Default (all unset) is the trailing 12
+    months. ``this_month``/``last_month`` are explicit so the planner never has to do
+    month arithmetic (the source of the 'last month' → current-month bug)."""
 
-    start: str | None = None  # YYYY-MM
-    end: str | None = None  # YYYY-MM
+    start: str | None = None  # YYYY-MM or YYYY-MM-DD
+    end: str | None = None  # YYYY-MM or YYYY-MM-DD
+    last_n_days: int | None = None
     last_n_months: int | None = None
     last_n_years: int | None = None
+    this_month: bool = False
+    last_month: bool = False
     year: int | None = None
     this_year: bool = False
 
@@ -172,23 +177,47 @@ def _months(start_ym: str, end_ym: str) -> list[str]:
     return months
 
 
-def resolve_period(period: Period, today: date) -> tuple[str, str]:
-    """Resolve a Period to inclusive (start_ym, end_ym) against ``today``.
+def _months_spanning(start: date, end: date) -> list[str]:
+    """The YYYY-MM months touched by an inclusive day range (the FX-conversion buckets)."""
+    return _months(f"{start.year:04d}-{start.month:02d}", f"{end.year:04d}-{end.month:02d}")
 
-    Defensive against the planner: explicit bounds are normalized to YYYY-MM (a model
-    sometimes emits full YYYY-MM-DD) and swapped if reversed, so a backwards range never
-    silently resolves to zero months (and a misleading 'you spent nothing')."""
-    today_ym = f"{today.year:04d}-{today.month:02d}"
+
+def _parse_bound(s: str, *, upper: bool) -> date:
+    """Parse an explicit bound that may be YYYY-MM or YYYY-MM-DD. A bare YYYY-MM becomes
+    the month's first day (lower) or last day (upper) so a month name spans its whole month."""
+    s = s.strip()
+    if len(s) >= 10:  # YYYY-MM-DD
+        return date.fromisoformat(s[:10])
+    ym = s[:7]
+    return metrics.month_end(ym) if upper else date(int(ym[:4]), int(ym[5:7]), 1)
+
+
+def resolve_period(period: Period, today: date) -> tuple[date, date]:
+    """Resolve a Period to inclusive day bounds ``(start_date, end_date)`` against ``today``.
+
+    Whole-month inputs resolve to the month's first…last day, so a month-grained question
+    is unchanged from before; explicit YYYY-MM-DD bounds now survive (instead of being
+    truncated). Defensive against the planner: reversed explicit bounds are swapped so a
+    backwards range never silently resolves to nothing."""
     if period.start and period.end:
-        a, b = period.start[:7], period.end[:7]
-        return (a, b) if a <= b else (b, a)
+        lo, hi = _parse_bound(period.start, upper=False), _parse_bound(period.end, upper=True)
+        return (lo, hi) if lo <= hi else (hi, lo)
+    if period.last_n_days is not None:
+        n = max(period.last_n_days, 1)
+        return (today - timedelta(days=n - 1), today)  # inclusive of today
+    if period.this_month:
+        return (today.replace(day=1), today)
+    if period.last_month:
+        last_prev = today.replace(day=1) - timedelta(days=1)  # last day of previous month
+        return (last_prev.replace(day=1), last_prev)
     if period.year is not None:
-        return (f"{period.year:04d}-01", f"{period.year:04d}-12")
+        return (date(period.year, 1, 1), date(period.year, 12, 31))
     if period.this_year:
-        return (f"{today.year:04d}-01", today_ym)
+        return (date(today.year, 1, 1), today)
     n_months = period.last_n_months or (period.last_n_years * 12 if period.last_n_years else None)
     n_months = n_months or 12  # default: trailing 12 months
-    return (_shift_ym(today_ym, -(n_months - 1)), today_ym)
+    start_ym = _shift_ym(f"{today.year:04d}-{today.month:02d}", -(n_months - 1))
+    return (date(int(start_ym[:4]), int(start_ym[5:7]), 1), today)
 
 
 # --- execution (Python/Decimal; reuses metrics) -------------------------------------
@@ -228,23 +257,35 @@ def run(
     if isinstance(spec, (SpendTotal, IncomeTotal)):
         start, end = resolve_period(spec.period, today)
         fn = metrics.spent if isinstance(spec, SpendTotal) else metrics.earned
-        total = sum((fn(conn, ym, fetch=fetch, today=today) for ym in _months(start, end)), Decimal(0))
-        return QueryResult(spec.metric, period=(start, end), scalar=total)
+        total = sum(
+            (fn(conn, ym, fetch=fetch, today=today, day_range=(start, end)) for ym in _months_spanning(start, end)),
+            Decimal(0),
+        )
+        return QueryResult(spec.metric, period=_span(start, end), scalar=total)
 
     if isinstance(spec, SpendByCategory):
         start, end = resolve_period(spec.period, today)
-        merged = _merge([metrics.spending_by_category(conn, ym, fetch=fetch, today=today) for ym in _months(start, end)])
+        merged = _merge([
+            metrics.spending_by_category(conn, ym, fetch=fetch, today=today, day_range=(start, end))
+            for ym in _months_spanning(start, end)
+        ])
         return _grouped_result(spec.metric, merged, start, end, spec.categories, spec.top, ascending=True)
 
     if isinstance(spec, SpendByMerchant):
         start, end = resolve_period(spec.period, today)
-        merged = _merge([metrics.spending_by_merchant(conn, ym, fetch=fetch, today=today) for ym in _months(start, end)])
+        merged = _merge([
+            metrics.spending_by_merchant(conn, ym, fetch=fetch, today=today, day_range=(start, end))
+            for ym in _months_spanning(start, end)
+        ])
         subjects = [spec.merchant] if spec.merchant else None
         return _grouped_result(spec.metric, merged, start, end, subjects, spec.top, ascending=True)
 
     if isinstance(spec, IncomeBySource):
         start, end = resolve_period(spec.period, today)
-        merged = _merge([metrics.income_by_source(conn, ym, fetch=fetch, today=today) for ym in _months(start, end)])
+        merged = _merge([
+            metrics.income_by_source(conn, ym, fetch=fetch, today=today, day_range=(start, end))
+            for ym in _months_spanning(start, end)
+        ])
         return _grouped_result(spec.metric, merged, start, end, None, spec.top, ascending=False)
 
     if isinstance(spec, NetWorth):
@@ -256,14 +297,14 @@ def run(
         start, end = resolve_period(spec.period, today)
         series = [
             (ym, metrics.net_worth(conn, metrics.as_of(ym, today), fetch=fetch))
-            for ym in _months(start, end)
+            for ym in _months_spanning(start, end)
         ]
-        return QueryResult(spec.metric, period=(start, end), series=series)
+        return QueryResult(spec.metric, period=_span(start, end), series=series)
 
     if isinstance(spec, InvestmentPerformance):
         start, end = resolve_period(spec.period, today)
         total, flagged, any_value = Decimal(0), False, False
-        for ym in _months(start, end):
+        for ym in _months_spanning(start, end):
             delta = metrics.portfolio_delta(conn, ym, patterns=patterns, fetch=fetch, today=today)
             if delta is not None:
                 total += delta.value
@@ -271,18 +312,23 @@ def run(
                 any_value = True
         note = None if any_value else "No prior snapshot to compare against."
         return QueryResult(
-            spec.metric, period=(start, end),
+            spec.metric, period=_span(start, end),
             scalar=total if any_value else None, flagged=flagged, note=note,
         )
 
     raise ValueError(f"run() called on unsupported spec: {spec.metric}")  # pragma: no cover
 
 
+def _span(start: date, end: date) -> tuple[str, str]:
+    """Inclusive day bounds as ISO YYYY-MM-DD, for display (D5 — consistent with as_of)."""
+    return (start.isoformat(), end.isoformat())
+
+
 def _grouped_result(
     metric: str,
     merged: dict[str, Decimal],
-    start: str,
-    end: str,
+    start: date,
+    end: date,
     subjects: list[str] | None,
     top: int | None,
     *,
@@ -303,11 +349,11 @@ def _grouped_result(
                 total += hit[1]
                 matched_any = True
         note = None if matched_any else "no spending found under those labels"
-        return QueryResult(metric, period=(start, end), subject=" + ".join(labels),
+        return QueryResult(metric, period=_span(start, end), subject=" + ".join(labels),
                            scalar=total, note=note)
     ranked = sorted(merged.items(), key=lambda kv: (kv[1] if ascending else -kv[1], kv[0]))
     rows = ranked[:top] if top else ranked
-    return QueryResult(metric, period=(start, end), rows=rows)
+    return QueryResult(metric, period=_span(start, end), rows=rows)
 
 
 # --- rendering (the only place a number becomes text) -------------------------------

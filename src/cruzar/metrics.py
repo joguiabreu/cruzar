@@ -81,17 +81,21 @@ def months_available(conn: sqlite3.Connection) -> list[str]:
 
 
 def earned(
-    conn: sqlite3.Connection, ym: str, *, fetch: Fetcher | None, today: date | None = None
+    conn: sqlite3.Connection, ym: str, *, fetch: Fetcher | None, today: date | None = None,
+    day_range: tuple[date, date] | None = None,
 ) -> Decimal:
-    """Cash-account inflows (amount > 0, not transfers) in ``ym``, in EUR."""
-    return _flow(conn, ym, positive=True, fetch=fetch, today=today)
+    """Cash-account inflows (amount > 0, not transfers) in ``ym``, in EUR. ``day_range``
+    optionally clips the lines to an inclusive day window within the month (ADR-17)."""
+    return _flow(conn, ym, positive=True, fetch=fetch, today=today, day_range=day_range)
 
 
 def spent(
-    conn: sqlite3.Connection, ym: str, *, fetch: Fetcher | None, today: date | None = None
+    conn: sqlite3.Connection, ym: str, *, fetch: Fetcher | None, today: date | None = None,
+    day_range: tuple[date, date] | None = None,
 ) -> Decimal:
-    """Cash-account outflows (amount < 0, not transfers) in ``ym``, in EUR (negative)."""
-    return _flow(conn, ym, positive=False, fetch=fetch, today=today)
+    """Cash-account outflows (amount < 0, not transfers) in ``ym``, in EUR (negative).
+    ``day_range`` optionally clips the lines to an inclusive day window (ADR-17)."""
+    return _flow(conn, ym, positive=False, fetch=fetch, today=today, day_range=day_range)
 
 
 def net(
@@ -287,7 +291,8 @@ def investment_holdings(conn: sqlite3.Connection, on: date) -> list[AccountHoldi
 
 
 def spending_by_category(
-    conn: sqlite3.Connection, ym: str, *, fetch: Fetcher | None, today: date | None = None
+    conn: sqlite3.Connection, ym: str, *, fetch: Fetcher | None, today: date | None = None,
+    day_range: tuple[date, date] | None = None,
 ) -> list[tuple[str, Decimal]]:
     """This month's cash spending grouped by category, in EUR (most-spent first).
 
@@ -295,25 +300,30 @@ def spending_by_category(
     joined to ``merchants.category`` — spending with no matched merchant is bucketed as
     ``Uncategorized`` so nothing is dropped and the totals sum to ``spent(ym)``. Summed
     per (category, currency) then converted to EUR at the ``as_of`` rate (ADR-5),
-    most-spent first."""
-    return _group_spend(conn, ym, "COALESCE(m.category, 'Uncategorized')", fetch=fetch, today=today)
+    most-spent first. ``day_range`` optionally clips to an inclusive day window (ADR-17)."""
+    return _group_spend(conn, ym, "COALESCE(m.category, 'Uncategorized')", fetch=fetch, today=today, day_range=day_range)
 
 
 def spending_by_merchant(
-    conn: sqlite3.Connection, ym: str, *, fetch: Fetcher | None, today: date | None = None
+    conn: sqlite3.Connection, ym: str, *, fetch: Fetcher | None, today: date | None = None,
+    day_range: tuple[date, date] | None = None,
 ) -> list[tuple[str, Decimal]]:
     """This month's cash spending grouped by matched merchant name, in EUR (most-spent
     first). Same filter/method as ``spending_by_category``; spending with no matched
-    merchant is bucketed as ``Uncategorized``."""
-    return _group_spend(conn, ym, "COALESCE(m.name, 'Uncategorized')", fetch=fetch, today=today)
+    merchant is bucketed as ``Uncategorized``. ``day_range`` optionally clips to an
+    inclusive day window (ADR-17)."""
+    return _group_spend(conn, ym, "COALESCE(m.name, 'Uncategorized')", fetch=fetch, today=today, day_range=day_range)
 
 
 def income_by_source(
-    conn: sqlite3.Connection, ym: str, *, fetch: Fetcher | None, today: date | None = None
+    conn: sqlite3.Connection, ym: str, *, fetch: Fetcher | None, today: date | None = None,
+    day_range: tuple[date, date] | None = None,
 ) -> list[tuple[str, Decimal]]:
     """This month's cash income grouped by source, in EUR (most-earned first). Source =
     matched merchant name else the raw description (the Earning Detail convention). Same
-    filter as ``earned``; the totals sum to ``earned(ym)``."""
+    filter as ``earned``; the totals sum to ``earned(ym)``. ``day_range`` optionally clips
+    to an inclusive day window (ADR-17)."""
+    day_clause, day_params = _day_filter(day_range)
     rows = conn.execute(
         "SELECT a.currency AS currency, t.amount AS amount, "
         "COALESCE(m.name, t.description_raw) AS source FROM transactions t "
@@ -323,17 +333,28 @@ def income_by_source(
         f"WHERE a.account_type IN ({','.join('?' * len(_CASH_TYPES))}) "
         "AND t.is_transfer = 0 AND t.superseded = 0 "
         "AND t.amount NOT LIKE '-%' AND t.amount != '0.00' "
-        "AND substr(t.date, 1, 7) = ?",
-        (*_CASH_TYPES, ym),
+        "AND substr(t.date, 1, 7) = ?" + day_clause,
+        (*_CASH_TYPES, ym, *day_params),
     ).fetchall()
     totals = _convert_grouped(conn, rows, key="source", ym=ym, fetch=fetch, today=today)
     return sorted(totals.items(), key=lambda kv: (-kv[1], kv[0]))  # most-earned first
 
 
+def _day_filter(day_range: tuple[date, date] | None) -> tuple[str, tuple[str, ...]]:
+    """An optional inclusive ``t.date BETWEEN lo AND hi`` clip (ADR-17). FX is untouched:
+    conversion still happens per-month at the ``as_of`` rate (ADR-5) — this only narrows
+    which lines are summed, so a full-month clip is a no-op and reconciles with the month."""
+    if day_range is None:
+        return "", ()
+    lo, hi = day_range
+    return " AND t.date BETWEEN ? AND ?", (lo.isoformat(), hi.isoformat())
+
+
 def _group_spend(
     conn: sqlite3.Connection, ym: str, key_expr: str, *, fetch: Fetcher | None,
-    today: date | None = None,
+    today: date | None = None, day_range: tuple[date, date] | None = None,
 ) -> list[tuple[str, Decimal]]:
+    day_clause, day_params = _day_filter(day_range)
     rows = conn.execute(
         f"SELECT a.currency AS currency, t.amount AS amount, {key_expr} AS grp "
         "FROM transactions t "
@@ -342,8 +363,8 @@ def _group_spend(
         "LEFT JOIN merchants m ON t.merchant_id = m.id "
         f"WHERE a.account_type IN ({','.join('?' * len(_CASH_TYPES))}) "
         "AND t.is_transfer = 0 AND t.superseded = 0 AND t.amount LIKE '-%' "
-        "AND substr(t.date, 1, 7) = ?",
-        (*_CASH_TYPES, ym),
+        "AND substr(t.date, 1, 7) = ?" + day_clause,
+        (*_CASH_TYPES, ym, *day_params),
     ).fetchall()
     totals = _convert_grouped(conn, rows, key="grp", ym=ym, fetch=fetch, today=today)
     return sorted(totals.items(), key=lambda kv: (kv[1], kv[0]))  # most-spent first
@@ -372,15 +393,16 @@ def _convert_grouped(
 
 def _flow(
     conn: sqlite3.Connection, ym: str, *, positive: bool, fetch: Fetcher | None,
-    today: date | None = None,
+    today: date | None = None, day_range: tuple[date, date] | None = None,
 ) -> Decimal:
+    day_clause, day_params = _day_filter(day_range)
     rows = conn.execute(
         "SELECT a.currency AS currency, t.amount AS amount FROM transactions t "
         "JOIN statements s ON t.statement_id = s.id "
         "JOIN accounts a ON s.account_id = a.id "
         f"WHERE a.account_type IN ({','.join('?' * len(_CASH_TYPES))}) "
-        "AND t.is_transfer = 0 AND t.superseded = 0 AND substr(t.date, 1, 7) = ?",
-        (*_CASH_TYPES, ym),
+        "AND t.is_transfer = 0 AND t.superseded = 0 AND substr(t.date, 1, 7) = ?" + day_clause,
+        (*_CASH_TYPES, ym, *day_params),
     ).fetchall()
     by_currency: dict[str, Decimal] = defaultdict(lambda: Decimal(0))
     for row in rows:

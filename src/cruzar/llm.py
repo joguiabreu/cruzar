@@ -239,16 +239,34 @@ def ollama_query_planner(
                 "local tool that does all the math itself — you only choose the query and its "
                 "parameters, you NEVER compute or guess a number. Today is "
                 f"{today.isoformat()}.\n"
-                "PERIOD: prefer a RELATIVE descriptor — set the period's last_n_months (e.g. 6), "
-                "last_n_years (e.g. 1 for 'last year'), year (e.g. 2025), or this_year. Only use "
-                "explicit start/end as 'YYYY-MM' (year-month, no day), start <= end. Never compute "
-                "the bounds yourself.\n"
+                "METRIC: if the question names NO category and NO merchant — a plain 'how much "
+                "did I spend' — use spend_total; do NOT enumerate every category. Use "
+                "spend_by_category only when a category or everyday spending-type word is named, and "
+                "spend_by_merchant only when a specific merchant is named.\n"
+                "PERIOD: prefer a RELATIVE descriptor — set the period's last_n_days (e.g. 10 for "
+                "'the last 10 days'), this_month (true for 'this month'), last_month (true for "
+                "'last month'), last_n_months (e.g. 6), last_n_years (e.g. 1 for 'last year'), year "
+                "(e.g. 2025), or this_year. For an explicit window use start/end — 'YYYY-MM-DD' for "
+                "a day range or 'YYYY-MM' for whole months — with start <= end. A phrase naming days "
+                "and a month, e.g. 'from the 10th to the 30th of May 2026', is an explicit day "
+                "window: start '2026-05-10', end '2026-05-30' (map the month name to its number; use "
+                "the stated year, else the most recent past one). Never compute relative bounds "
+                "yourself; Python resolves them against today.\n"
                 "CATEGORIES: for a spend_by_category query, set `categories` to a LIST of the "
                 f"relevant categories chosen ONLY from this exact list: {vocab}. Map everyday "
                 "words to one or MORE of them — e.g. 'food' -> ['Dining', 'Groceries'], 'eating "
                 "out' -> ['Dining']. Use the exact spellings above; never invent a category.\n"
                 "If the question doesn't fit any available query, return the 'unsupported' query "
-                "with a brief reason."
+                "with a brief reason.\n"
+                "Examples (question -> plan JSON):\n"
+                "- 'how much did I spend from the 10th to the 30th of May 2026?' -> "
+                '{"query": {"metric": "spend_total", "period": {"start": "2026-05-10", "end": "2026-05-30"}}}\n'
+                "- 'how much did I spend in the last 10 days?' -> "
+                '{"query": {"metric": "spend_total", "period": {"last_n_days": 10}}}\n'
+                "- 'how much did I spend on Dining last month?' -> "
+                '{"query": {"metric": "spend_by_category", "period": {"last_month": true}, "categories": ["Dining"]}}\n'
+                "- 'what did I spend at Acme Coffee this month?' -> "
+                '{"query": {"metric": "spend_by_merchant", "period": {"this_month": true}, "merchant": "Acme Coffee"}}'
             )
             try:
                 result = client.chat.completions.create(

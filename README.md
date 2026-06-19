@@ -121,6 +121,8 @@ Ask a free-form question about your data:
 
 ```bash
 uv run cruzar ask "how much did I spend on Dining in the last 6 months?"
+uv run cruzar ask "how much did I spend from the 10th to the 30th of June?"
+uv run cruzar ask "what did I spend in the last 10 days?"
 uv run cruzar ask "what was my main source of spending last year?"
 uv run cruzar ask "how have my investments been going?"
 ```
@@ -131,8 +133,11 @@ in Python/`Decimal` from the same source the reports use, so answers are exact a
 reconcile with them (the model can't hallucinate a figure). It needs Ollama running
 (same `llm:` config as categorization), is **read-only**, and uses cached FX. It
 answers about spending (total / by category / by merchant), income (total / by source),
-net worth (now or as a trend), and investment performance over a time range; anything
-outside that gets an honest "I can't answer that" rather than a guess. See
+net worth (now or as a trend), and investment performance over a time range. Spending and
+income work at **day** granularity too — an explicit day window (e.g. a vacation), "the
+last 10 days", "this month", "last month" — while net worth and performance stay
+month-based. Anything outside that gets an honest "I can't answer that" rather than a
+guess. See
 [design notes](docs/design/query_planner.md) for how it works.
 
 ### What a report looks like
@@ -466,7 +471,7 @@ never enter version control.
 
 ```bash
 uv run pytest                    # full test suite
-uv run pytest tests/acceptance   # acceptance harness — one test per AC (AC1–AC22)
+uv run pytest tests/acceptance   # acceptance harness — one test per AC (AC1–AC23)
 uv run ruff check .              # lint
 uv run pyright                   # strict type check
 ```

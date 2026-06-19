@@ -18,7 +18,7 @@ product behavior, `docs/SPEC.md` wins; ask before deviating from either.
 - Pipeline: `uv run cruzar process` (fetch: `cruzar fetch`, report: `cruzar report`)
 - Tests: `uv run pytest`
 - **Acceptance harness:** `uv run pytest tests/acceptance` — one test per AC in
-  `SPEC.md` (AC1–AC22). This is the gate. Work isn't done until the relevant
+  `SPEC.md` (AC1–AC23). This is the gate. Work isn't done until the relevant
   AC here is green.
 - Must pass before any task is "done": `uv run ruff check . && uv run pyright && uv run pytest`
 
