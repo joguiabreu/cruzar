@@ -1,10 +1,223 @@
 # Merchant catalogue + regex patterns (SPEC §Inputs). Seeded into the
 # `merchants` / `merchant_patterns` tables each run (ADR-3). Lower priority
-# wins; ties broken by insertion id (ADR-13). Patterns are matched
-# case-insensitively against transactions.description_raw.
+# wins; ties broken by insertion id (ADR-13). Patterns are regexes matched
+# case-insensitively (re.search) against transactions.description_raw — use
+# \b...\b word boundaries to avoid accidental substring hits (e.g. \bBP\b
+# does NOT match "BPI"). A rule overrides an `llm` guess; nothing overrides
+# `manual`. Only well-known BRAND patterns belong here — never a personal
+# name, a one-off payee, or anything that identifies you (privacy invariant).
 merchants:
+  # --- Groceries -------------------------------------------------------------
+  - name: Continente
+    category: Groceries
+    patterns:
+      - pattern: '\bContinente\b'
+        priority: 100
+  - name: Pingo Doce
+    category: Groceries
+    patterns:
+      - pattern: 'Pingo Doce'
+        priority: 100
+  - name: Lidl
+    category: Groceries
+    patterns:
+      - pattern: '\bLidl\b'
+        priority: 100
+  - name: Auchan
+    category: Groceries
+    patterns:
+      - pattern: '\bAuchan\b'
+        priority: 100
+  - name: Minipreço
+    category: Groceries
+    patterns:
+      - pattern: 'Minipre[çc]o'
+        priority: 100
+
+  # --- Dining (incl. food delivery — your call) ------------------------------
+  - name: McDonald's
+    category: Dining
+    patterns:
+      - pattern: 'Mc ?Donald'
+        priority: 100
+  - name: Burger King
+    category: Dining
+    patterns:
+      - pattern: 'Burger King'
+        priority: 100
+  - name: Glovo
+    category: Dining
+    patterns:
+      - pattern: '\bGlovo\b'
+        priority: 100
+  - name: Uber Eats
+    category: Dining
+    patterns:
+      - pattern: 'Uber\s*Eats'
+        priority: 50  # beats the generic \bUber\b -> Transport rule below
+  - name: Telepizza
+    category: Dining
+    patterns:
+      - pattern: 'Telepizza'
+        priority: 100
+
+  # --- Transport -------------------------------------------------------------
+  - name: Uber
+    category: Transport
+    patterns:
+      - pattern: '\bUber\b'
+        priority: 100
+  - name: Bolt
+    category: Transport
+    patterns:
+      - pattern: '\bBolt\b'
+        priority: 100
+  - name: Bird
+    category: Transport
+    patterns:
+      - pattern: '\bBird\b'
+        priority: 100
+  - name: Metropolitano
+    category: Transport
+    patterns:
+      - pattern: 'Metropolitano'
+        priority: 100
+  - name: Carris
+    category: Transport
+    patterns:
+      - pattern: '\bCarris\b'
+        priority: 100
+  - name: Lusoponte
+    category: Transport
+    patterns:
+      - pattern: 'Lusoponte'
+        priority: 100
+  - name: Via Verde
+    category: Transport
+    patterns:
+      - pattern: 'Via Verde'
+        priority: 100
+
+  # --- Fuel ------------------------------------------------------------------
+  - name: Galp
+    category: Fuel
+    patterns:
+      - pattern: '\bGalp\b'
+        priority: 100
+  - name: Repsol
+    category: Fuel
+    patterns:
+      - pattern: '\bRepsol\b'
+        priority: 100
+  - name: BP
+    category: Fuel
+    patterns:
+      - pattern: '\bBP\b'
+        priority: 100
+  - name: Cepsa
+    category: Fuel
+    patterns:
+      - pattern: '\bCepsa\b'
+        priority: 100
+
+  # --- Shopping --------------------------------------------------------------
+  - name: Worten
+    category: Shopping
+    patterns:
+      - pattern: '\bWorten\b'
+        priority: 100
+  - name: Radio Popular
+    category: Shopping
+    patterns:
+      - pattern: 'Radio Popular'
+        priority: 100
+  - name: Bertrand
+    category: Shopping
+    patterns:
+      - pattern: '\bBertrand\b'
+        priority: 100
+  - name: Fnac
+    category: Shopping
+    patterns:
+      - pattern: '\bFnac\b'
+        priority: 100
+  - name: IKEA
+    category: Shopping
+    patterns:
+      - pattern: '\bIKEA\b'
+        priority: 100
+
+  # --- Health ----------------------------------------------------------------
+  - name: Medis
+    category: Health
+    patterns:
+      - pattern: '\bMedis\b'
+        priority: 100
+  - name: VivaGym
+    category: Health
+    patterns:
+      - pattern: 'Viva ?Gym'
+        priority: 100
+  - name: Hospital Luz
+    category: Health
+    patterns:
+      - pattern: 'Hosp(ital)? Lui?z'  # "Hospital Luz" and the "Hosp Luiz" variant
+        priority: 100
+
+  # --- Subscriptions ---------------------------------------------------------
   - name: Spotify
     category: Subscriptions
     patterns:
-      - pattern: "Spotify"
+      - pattern: 'Spotify'
+        priority: 100
+  - name: Claude.ai
+    category: Subscriptions
+    patterns:
+      - pattern: 'Claude\.?ai'
+        priority: 100
+  - name: Netflix
+    category: Subscriptions
+    patterns:
+      - pattern: 'Netflix'
+        priority: 100
+
+  # --- Income ----------------------------------------------------------------
+  - name: Vencimento
+    category: Income
+    patterns:
+      - pattern: '\bVencimento\b'  # PT payslip term for salary
+        priority: 100
+
+  # --- Taxes -----------------------------------------------------------------
+  - name: Imposto do Selo
+    category: Taxes
+    patterns:
+      - pattern: 'Imposto Do Selo'  # stamp duty
+        priority: 100
+
+  # --- Transfer (own-account / fintech / broker movements — your call) -------
+  - name: Revolut
+    category: Transfer
+    patterns:
+      - pattern: '\bRevolut\b'
+        priority: 100
+  - name: Moey
+    category: Transfer
+    patterns:
+      - pattern: '\bMoey\b'
+        priority: 100
+  - name: Degiro
+    category: Transfer
+    patterns:
+      - pattern: '\bDegiro\b'
+        priority: 100
+  - name: Flatex
+    category: Transfer
+    patterns:
+      - pattern: '\bFlatex\b'
+        priority: 100
+  - name: Interactive Brokers
+    category: Transfer
+    patterns:
+      - pattern: 'Interactive Brokers'
         priority: 100
