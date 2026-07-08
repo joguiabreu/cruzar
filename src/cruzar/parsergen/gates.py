@@ -29,6 +29,7 @@ SemanticType = Literal["amount", "date", "text", "id"]
 _NUM_DATE_RE = re.compile(r"^\d{1,4}[/.\-]\d{1,2}[/.\-]\d{1,4}$")  # 06/07/2026, 26-07-06
 _TIME_RE = re.compile(r"^\d{1,2}:\d{2}(:\d{2})?$")  # 14:56, 14:56:07
 _POSTAL_RE = re.compile(r"^\d{4}-\d{3}$")  # PT postal code, e.g. 1234-567 (locates a person)
+_EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")  # an email address (identifies a person)
 _AMOUNT_RE = re.compile(r"\d[.,]\d")  # 9,99  1.234,56  88,50€
 _IDCODE_RE = re.compile(r"[A-Z]{2}\d{2}\d|\*+\d{2,}|\d{5,}")  # NIF/IBAN, masked card, long id run
 
@@ -45,6 +46,8 @@ def detect_value_type(token: str) -> SemanticType | None:
         return "amount"  # digit-mask keeps the ':'; a fake time need not be a valid clock time
     if _POSTAL_RE.match(token):
         return "id"  # digit-mask keeps the '-'; scrubs a location that pinpoints someone
+    if _EMAIL_RE.search(token):
+        return "id"  # alnum-mask keeps '@' and '.'; scrubs a personal email
     if _AMOUNT_RE.search(token):
         return "amount"
     if _IDCODE_RE.search(token):
@@ -68,9 +71,9 @@ def norm_token(token: str) -> str:
 
 def denylist_words(terms: Sequence[str]) -> frozenset[str]:
     """The distinctive individual words in the ``.pii-denylist`` terms — phrases split, common
-    connectors and very short words dropped. A full-name term like 'Ana Maria Silva' thus also
-    protects the lone tokens 'Ana', 'Maria', 'Silva', which is how a name actually appears on a
-    statement: scattered across lines, not as one contiguous phrase."""
+    connectors and very short words dropped. A full-name term like 'Firstname Middlename Surname'
+    thus also protects the lone tokens 'Firstname', 'Surname', which is how a name actually appears
+    on a statement: scattered across lines, not as one contiguous phrase."""
     words: set[str] = set()
     for term in terms:
         for raw in re.split(r"\s+", term.strip().lower()):

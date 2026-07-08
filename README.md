@@ -152,7 +152,7 @@ uv run cruzar anonymize data/inbox/newbank/statement.pdf
 
 It captures the exact word/geometry layer a parser reads (via `pdfplumber`). Python
 **deterministically force-replaces** every value-shaped token (amounts, dates, times, NIF/IBAN,
-card masks, long ids) so value scrubbing never depends on the model, and the local LLM
+card masks, long ids, postal codes, emails) so value scrubbing never depends on the model, and the local LLM
 **classifies** the rest — labeling remaining tokens as structural (kept) or non-value PII like
 names/addresses (replaced). **Python then generates a shape-preserving fake** for each: a comma
 stays a comma, a dot stays a dot, dates stay valid, lengths and columns are unchanged.

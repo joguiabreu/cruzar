@@ -141,6 +141,12 @@ def test_postal_code_is_a_deterministic_value() -> None:
     assert detect_value_type("COMPRA") is None  # a plain label is not a value
 
 
+def test_email_is_a_deterministic_value() -> None:
+    # An email has a shape too, so it's caught by the detector, not left to the model.
+    assert detect_value_type("fake.person@example.com") == "id"
+    assert detect_value_type("Groceries") is None
+
+
 def test_denylist_word_is_force_replaced_even_if_model_keeps_it() -> None:
     # A personal name isn't value-shaped, so the model must catch it — but a .pii-denylist entry
     # force-replaces it deterministically, at the word level (a lone name token).
