@@ -140,6 +140,55 @@ month-based. Anything outside that gets an honest "I can't answer that" rather t
 guess. See
 [design notes](docs/design/query_planner.md) for how it works.
 
+### `cruzar anonymize`
+
+Produce a **privacy-safe sample** of a statement so a parser can be developed for a new
+institution without exposing real data:
+
+```bash
+uv run cruzar anonymize data/inbox/newbank/statement.pdf
+# -> data/parsergen/statement/sample.layout.json + gate_report.txt
+```
+
+It captures the exact word/geometry layer a parser reads (via `pdfplumber`). Python
+**deterministically force-replaces** every value-shaped token (amounts, dates, times, NIF/IBAN,
+card masks, long ids) so value scrubbing never depends on the model, and the local LLM
+**classifies** the rest — labeling remaining tokens as structural (kept) or non-value PII like
+names/addresses (replaced). **Python then generates a shape-preserving fake** for each: a comma
+stays a comma, a dot stays a dot, dates stay valid, lengths and columns are unchanged.
+Two gates guard the result — a deterministic **safety gate** (no real value may survive; it
+aborts and writes nothing if one does) and a **fidelity gate** (structure preserved). It needs
+Ollama running, is an **operator tool** (never part of `process`), and the output stays in
+gitignored `data/` — nothing leaves your machine. See
+[plan 030](docs/plans/plan_030_document_anonymizer.md).
+
+The model only has to **name the personal-data tokens to replace** — Python force-replaces every
+amount/date/account-number deterministically first — so even a small model (the default
+`qwen2.5:3b`) preserves structure well and runs in well under a minute. If you want sharper name
+detection on tougher documents, override the model with `--model` or a persistent default:
+
+```yaml
+llm:
+  anonymize_model: qwen2.5:14b        # override just for anonymize (unset -> uses llm.model)
+  anonymize_timeout_seconds: 300
+```
+
+```bash
+uv run cruzar anonymize data/inbox/newbank/statement.pdf --model qwen2.5:14b
+```
+
+**Model caveat:** use one that *terminates* under Ollama's structured-JSON output. Some models
+(e.g. `gemma4`) run away to their token limit and stall the whole Ollama queue; same-family
+scale-ups of a model you know works (e.g. `qwen2.5:7b`/`14b`) are the safe choice.
+
+**Scrub your own name/address deterministically.** Amounts, dates, and account numbers are
+value-shaped, so Python force-replaces them without the model. A **name is just a word** — it's
+not value-shaped, so it relies on the model, which can miss it. Put your name, address, and account
+numbers in the gitignored `.pii-denylist` (one term per line; phrases are split into words, so a
+full name protects each name token). The anonymizer then force-replaces those deterministically,
+and the safety gate blocks any run where one survives. Still eyeball the sample for third-party
+names the model didn't catch.
+
 ### What a report looks like
 
 Reports land at `reports/cruzar-YYYY-MM.md`, one per calendar month. The
@@ -449,6 +498,11 @@ deterministic top-to-bottom order (ADR-11). To add one:
 That's the whole change (SPEC AC7) — the core pipeline stays
 institution-agnostic. The shipped `moey` parser is the canonical example.
 
+To develop a parser against a real statement without exposing its data, first run
+[`cruzar anonymize`](#cruzar-anonymize) on it and work from the anonymized sample. The
+committed fixture (step 3) is still hand-authored with obviously-fake values — the anonymized
+sample is a gitignored dev aid, never the fixture.
+
 **Never** copy a real statement into `tests/fixtures/` — those are tracked by
 git. Real data lives only in the gitignored `data/` directory, and fixture
 values must be obviously fake.
@@ -460,6 +514,7 @@ config/          # YAML inputs (sources, categories, merchants, app config)
 data/            # gitignored — your statements (data/inbox/) and the SQLite DB
 reports/         # gitignored — generated cruzar-YYYY-MM.md reports
 src/cruzar/      # pipeline, parsers, persistence, reporting
+src/cruzar/parsergen/  # `cruzar anonymize` tooling (operator-only, not in the pipeline)
 tests/           # unit tests + acceptance harness (tests/acceptance/)
 docs/SPEC.md     # full specification (the source of truth for behavior)
 ```

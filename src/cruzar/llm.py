@@ -10,10 +10,15 @@ the affected lines show in Needs-Categorization and retry next run).
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from cruzar.analytics import QueryPlanner, QuerySpec
 from cruzar.categorize import LlmCategorizer, LlmError, LlmTimeout, LlmUnavailable, Proposal
 from cruzar.extract import LlmExtractor, to_parsed_statement
 from cruzar.models import ParsedStatement
+
+if TYPE_CHECKING:
+    from cruzar.parsergen.anonymize import Classification, Classifier
 
 _EXTRACT_SYSTEM = (
     "You transcribe a bank statement that automated parsing could not read into "
@@ -298,3 +303,129 @@ def ollama_query_planner(
             return result.query
 
     return _OllamaQueryPlanner()
+
+
+_CLASSIFY_SYSTEM = (
+    "You help anonymize a statement/receipt for parser development, WITHOUT leaking anyone's "
+    "personal data. Numeric values (amounts, dates, account/card numbers, postal codes) are handled "
+    "separately, so you focus on TEXT. Given a few statement lines for context and a numbered list "
+    "of candidate tokens, return ONLY the tokens that identify a PERSON or their location/contact "
+    "and must be replaced:\n"
+    "  - a person's name — a given name OR a surname, and payee/counterparty person or company "
+    "names (each name word is its own token, so list every one);\n"
+    "  - a street or address word, a city/locality, or a place that says where someone lives;\n"
+    "  - an email, a phone number, or a personal account/reference/authorization code.\n"
+    "When a token PLAUSIBLY could be a person's name or part of an address, PREFER to replace it — "
+    "over-replacing a name is safe, missing one leaks real data. Do NOT replace: the bank's or "
+    "store's OWN name, column headers and generic labels (e.g. 'Data', 'Saldo', 'DESCRICAO', "
+    "'IVA', 'EUR'), product/service descriptions, or boilerplate — those are kept to preserve the "
+    "format. For each token to replace give its index (from the list) and a type: 'id' for a code "
+    "with letters+digits, else 'text'. Empty list if none. Never invent indices; never do arithmetic."
+)
+
+
+def ollama_token_classifier(model: str, host: str, timeout: float = 120.0) -> Classifier:
+    """Build an Ollama-backed token classifier for the anonymizer (plan 030). Value-shaped tokens
+    (amounts/dates/ids) are force-replaced deterministically downstream, so the model is asked only
+    about the *remaining* text tokens and only to name the ones that are personal data to replace
+    (everything else defaults to ``keep``). Two moves keep it inside a small context window on a
+    dense document: send only the statement lines relevant to each batch (not the whole document),
+    and chunk the candidate tokens. Answers are by *index* so the model can't drift a token's
+    spelling; an omitted token stays ``keep``. See ``docs/design/anonymizer_chunking.md``."""
+    from collections.abc import Sequence
+    from typing import Literal
+
+    import instructor
+    from openai import APIConnectionError, APITimeoutError, OpenAI
+    from pydantic import BaseModel
+    from tenacity import Retrying, retry_if_not_exception_type, stop_after_attempt
+
+    from cruzar.parsergen.anonymize import Classification
+
+    class _Repl(BaseModel):
+        index: int
+        type: Literal["text", "id"]
+
+    class _Result(BaseModel):
+        replace: list[_Repl]
+
+    client = instructor.from_openai(
+        OpenAI(base_url=f"{host.rstrip('/')}/v1", api_key="ollama", max_retries=0, timeout=timeout),
+        mode=instructor.Mode.JSON_SCHEMA,
+    )
+    reprompt = Retrying(
+        stop=stop_after_attempt(2),
+        retry=retry_if_not_exception_type(APIConnectionError),
+        reraise=True,
+    )
+
+    def _relevant_lines(lines: Sequence[str], batch_tokens: set[str], cap: int = 80) -> str:
+        """Only the statement lines containing a batch token — enough local context to judge
+        name-vs-label without pushing the whole document through the window."""
+        picked: list[str] = []
+        seen: set[str] = set()
+        for line in lines:
+            if line in seen:
+                continue
+            if any(tok in line for tok in batch_tokens):
+                picked.append(line)
+                seen.add(line)
+        return "\n".join(picked[:cap])
+
+    def _classify_batch(context: str, batch: list[tuple[int, str]], feedback: str | None) -> _Result:
+        listing = "\n".join(f"{j}: {t}" for j, (_gi, t) in enumerate(batch))
+        user = (
+            f"Relevant statement lines (context):\n{context}\n\n"
+            f"Candidate tokens (index: value):\n{listing}\n\n"
+            "List only the indices that are personal data to replace."
+        )
+        if feedback:
+            user += (
+                f"\n\nA previous attempt failed a structure check ({feedback}). Re-check that you "
+                "did not list a structural label or the store's own name."
+            )
+        try:
+            return client.chat.completions.create(
+                model=model,
+                temperature=0,
+                response_model=_Result,
+                max_retries=reprompt,
+                # Cap generation: the replace-list for one batch is small, so a model that keeps
+                # emitting past this isn't producing our schema (some models don't terminate under
+                # Ollama's grammar-constrained JSON) — fail in seconds, not minutes.
+                max_tokens=1024,
+                messages=[
+                    {"role": "system", "content": _CLASSIFY_SYSTEM},
+                    {"role": "user", "content": user},
+                ],
+            )
+        except APITimeoutError as exc:
+            raise LlmTimeout(f"token classification timed out after {timeout:.0f}s") from exc
+        except APIConnectionError as exc:
+            raise LlmUnavailable(f"cannot reach Ollama at {host}") from exc
+        except Exception as exc:  # schema-validation, truncation, or other failure
+            raise LlmError(f"token classification failed: {exc}") from exc
+
+    class _OllamaClassifier:
+        def classify(
+            self, *, text: str, tokens: Sequence[str], feedback: str | None = None
+        ) -> list[Classification]:
+            from cruzar.parsergen.gates import detect_value_type
+
+            lines = text.split("\n")
+            labels = [Classification(token=t, kind="keep") for t in tokens]
+            # Only the tokens the deterministic detector can't resolve reach the model (names,
+            # labels, free text); value-shaped tokens are force-replaced downstream.
+            to_ask = [(i, t) for i, t in enumerate(tokens) if detect_value_type(t) is None]
+            chunk = 40
+            for start in range(0, len(to_ask), chunk):
+                batch = to_ask[start : start + chunk]
+                context = _relevant_lines(lines, {t for _gi, t in batch})
+                result = _classify_batch(context, batch, feedback)
+                for repl in result.replace:
+                    if 0 <= repl.index < len(batch):
+                        gi, token = batch[repl.index]
+                        labels[gi] = Classification(token=token, kind="replace", type=repl.type)
+            return labels
+
+    return _OllamaClassifier()

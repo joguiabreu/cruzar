@@ -58,6 +58,11 @@ class LlmConfig:
     host: str = "http://localhost:11434"
     min_confidence: float = 0.7  # below this a proposal is needs_review, not applied
     timeout: float = 60.0  # per-request seconds; a down service fails fast regardless
+    # `cruzar anonymize` is not time-critical and benefits from a stronger model than
+    # categorization (better label-vs-value judgment). These default to `model`/`timeout`
+    # when unset; a bigger model here trades speed for fewer over-scrubbed labels.
+    anonymize_model: str | None = None
+    anonymize_timeout: float | None = None
 
 
 @dataclass(frozen=True)
@@ -102,6 +107,16 @@ def load_config(config_dir: str | Path) -> Config:
         host=str(llm_settings.get("host", "http://localhost:11434")),
         min_confidence=float(llm_settings.get("min_confidence", 0.7)),
         timeout=float(llm_settings.get("timeout_seconds", 60.0)),
+        anonymize_model=(
+            str(llm_settings["anonymize_model"])
+            if llm_settings.get("anonymize_model")
+            else None
+        ),
+        anonymize_timeout=(
+            float(llm_settings["anonymize_timeout_seconds"])
+            if llm_settings.get("anonymize_timeout_seconds")
+            else None
+        ),
     )
 
     accounts = [AccountConfig(**entry) for entry in sources.get("accounts", [])]
