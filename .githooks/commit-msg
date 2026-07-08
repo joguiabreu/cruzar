@@ -1,0 +1,10 @@
+#!/bin/sh
+# Deterministic PII guard for the COMMIT MESSAGE (see .githooks/check_commit_msg.py).
+# Git passes the path to the message file as $1. Runs under uv when available so it
+# shares the project interpreter; falls back to system python3.
+root="$(git rev-parse --show-toplevel)"
+if command -v uv >/dev/null 2>&1; then
+  exec uv run --project "$root" python "$root/.githooks/check_commit_msg.py" "$1"
+else
+  exec python3 "$root/.githooks/check_commit_msg.py" "$1"
+fi

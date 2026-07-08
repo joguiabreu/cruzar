@@ -15,10 +15,11 @@ A real export is harder than a monthly statement (see plan_004):
 
 The whole file is parsed as ONE statement (period = first section start … last
 section end; ``closing_balance`` = the Saldo of the last transaction row).
-Amounts are ``€1,234.56`` (dot decimal); the retirado/recebido column gives the
-sign (retirado = debit/negative, recebido = credit/positive). Amounts stay native
-EUR — the foreign leg of a currency conversion is kept only as description text,
-never converted here (ADR-1, ADR-5).
+Amounts appear in either locale Revolut exports — ``€1,234.56`` (en) or ``1.234,56€``
+(pt: comma decimal, € suffix), normalized to a plain Decimal at the boundary. The
+retirado/recebido column gives the sign (retirado = debit/negative, recebido =
+credit/positive). Amounts stay native EUR — the foreign leg of a currency conversion
+is kept only as description text, never converted here (ADR-1, ADR-5).
 
 A parse failure raises ``RevolutParseError`` — nothing partial (SPEC §Edge cases).
 """
@@ -35,16 +36,24 @@ from typing import Any
 import pdfplumber
 
 from cruzar.models import ParsedStatement, ParsedTransaction
-from cruzar.parsers._common import PT_DATE_RE, cluster_rows, parse_pt_month_date, row_text
+from cruzar.parsers._common import (
+    PT_DATE_RE,
+    ParserError,
+    cluster_rows,
+    parse_pt_month_date,
+    row_text,
+)
 
 # A transaction date token: DD/MM/YYYY (pt-pt).
 _DATE_RE = re.compile(r"^\d{2}/\d{2}/\d{4}$")
-# A money amount: € prefix, comma thousands, dot decimal (e.g. "€1,234.56").
+# A money amount in either locale Revolut exports:
+#   en: "€1,234.56"  (€ prefix, comma thousands, dot decimal)
+#   pt: "1.234,56€"  (dot thousands, comma decimal, € suffix)
 # Matched as a *substring* (not anchored): a long description can abut the amount
 # with no space, so pdfplumber emits a glued token like "48€10.00" — the digits
 # before "€" belong to the description and the amount still right-aligns to its
 # column, so we anchor on the right edge (x1).
-_AMOUNT_SUB = re.compile(r"€[\d,]+\.\d{2}")
+_AMOUNT_SUB = re.compile(r"€[\d,]+\.\d{2}|\d[\d.]*,\d{2}€")
 _DATE_X0_MAX = 100.0  # transaction date columns sit left of this
 _CURRENCY_RE = re.compile(r"Extrato de ([A-Z]{3})")
 
@@ -62,7 +71,7 @@ _EXIT_MARKERS = (
 )
 
 
-class RevolutParseError(Exception):
+class RevolutParseError(ParserError):
     """Raised when the Revolut statement layout cannot be parsed."""
 
 
@@ -77,9 +86,17 @@ class _Columns:
 
 
 def _eur_decimal(token: str) -> Decimal:
-    """Convert a '€1,234.56' token to Decimal('1234.56')."""
+    """Convert a Revolut amount token to Decimal, in either locale: '€1,234.56' (en) or
+    '1.234,56€' (pt). The decimal separator is whichever of '.' / ',' comes last; the
+    other is a thousands separator and is dropped — normalizing the localized input to a
+    plain Decimal at the boundary (money invariant: we never emit comma-decimals)."""
+    s = token.replace("€", "").strip()
+    if s.rfind(",") > s.rfind("."):  # pt: comma is the decimal separator
+        s = s.replace(".", "").replace(",", ".")
+    else:  # en: dot is the decimal separator (or there's no comma at all)
+        s = s.replace(",", "")
     try:
-        return Decimal(token.removeprefix("€").replace(",", ""))
+        return Decimal(s)
     except InvalidOperation as exc:
         raise RevolutParseError(f"unparseable amount: {token!r}") from exc
 

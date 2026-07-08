@@ -11,14 +11,17 @@ from __future__ import annotations
 import hashlib
 import logging
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
-from cruzar import categorize, fx, report, transfers
+from cruzar import categorize, conflicts, fx, report, transfers
+from cruzar.categorize import LlmError
 from cruzar.config import load_config
 from cruzar.db import connect, init_schema
+from cruzar.extract import LlmExtractor
+from cruzar.models import ParsedStatement
 from cruzar.parsers import get_parser
-from cruzar.parsers.activobank import ActivoBankParseError
+from cruzar.parsers._common import ExtractionFallback, ParserError
 from cruzar.persist import persist_statement, seed_config
 
 # Logs carry filenames and counts only — never transaction descriptions or
@@ -56,6 +59,23 @@ def _resolve_account(conn: sqlite3.Connection, folder: str) -> sqlite3.Row | Non
     ).fetchone()
 
 
+def _ingest_summary(statement: ParsedStatement) -> str:
+    """A human phrase for what a statement contributed — cash transactions and/or
+    holdings. Investment statements carry holdings (snapshots), not transactions, so
+    plain '0 transactions' hides that something was ingested."""
+
+    def _n(count: int, noun: str) -> str:
+        return f"{count} {noun}{'' if count == 1 else 's'}"
+
+    n_txn, n_hold = len(statement.transactions), len(statement.holdings)
+    parts: list[str] = []
+    if n_txn or not n_hold:  # show txns unless it's a pure holdings snapshot
+        parts.append(_n(n_txn, "transaction"))
+    if n_hold:
+        parts.append(_n(n_hold, "holding"))
+    return ", ".join(parts)
+
+
 def process(
     db_path: str | Path,
     inbox_dir: str | Path,
@@ -67,9 +87,25 @@ def process(
     try:
         init_schema(conn)
         seed_config(conn, config)
-        _ingest_inbox(conn, Path(inbox_dir))
+        # LLM tier (ADR-2/13): build the Ollama clients only when enabled; otherwise
+        # rule-only with zero calls and no extraction fallback. Imports are local so
+        # offline runs never load instructor/openai.
+        propose = None
+        extractor: LlmExtractor | None = None
+        if config.llm.enabled:
+            from cruzar.llm import ollama_categorizer, ollama_extractor
+
+            propose = ollama_categorizer(config.llm.model, config.llm.host, config.llm.timeout)
+            extractor = ollama_extractor(config.llm.model, config.llm.host, config.llm.timeout)
+        ingest_inbox(conn, Path(inbox_dir), extractor=extractor)
         transfers.detect(conn, config.transfer_patterns)  # normalize (ADR-15)
-        categorize.categorize(conn)
+        conflicts.detect(conn)  # flag restated transactions (normalize, ADR-8)
+        categorize.categorize(
+            conn,
+            propose=propose,
+            model=config.llm.model,
+            min_confidence=config.llm.min_confidence,
+        )
         # FX for Net Worth: offline → no fetch (cache/manual rates only).
         fetch = (
             None
@@ -86,7 +122,68 @@ def process(
         conn.close()
 
 
-def _ingest_inbox(conn: sqlite3.Connection, inbox_dir: Path) -> None:
+def report_only(
+    db_path: str | Path, config_dir: str | Path, reports_dir: str | Path
+) -> None:
+    """Re-render the monthly reports from the existing DB — the `report` pipeline stage
+    on its own (ADR-3/4). Read-only w.r.t. the DB (AC13): no ingest, normalize,
+    categorize, or LLM, and no FX fetch (`fetch=None`) — a fetch would persist a rate.
+    Converts using cached/manual `fx_rates`, rendering `n/a` for any absent month-end
+    rate; fetching is `process`'s job. Writes only to `reports/`."""
+    config = load_config(config_dir)
+    conn = connect(db_path)
+    try:
+        init_schema(conn)  # idempotent; a no-op (no byte change) on an up-to-date DB
+        report.write_reports(
+            conn,
+            Path(reports_dir),
+            investment_flow_patterns=config.investment_flow_patterns,
+            fetch=None,
+        )
+    finally:
+        conn.close()
+
+
+def ask(db_path: str | Path, config_dir: str | Path, question: str, *, today: date | None = None) -> str:
+    """Answer a free-form question about the data (ADR-17). The local LLM maps the
+    question to a bounded analytics query; Python computes the figure (ADR-1). Read-only,
+    cached FX only (no fetch), like `report`. Returns a plain-text answer."""
+    from datetime import date as _date
+
+    from cruzar import analytics
+
+    config = load_config(config_dir)
+    if not config.llm.enabled:
+        return (
+            "The assistant needs the local LLM enabled — set `llm.enabled: true` in "
+            "config/cruzar.yaml and make sure Ollama is running."
+        )
+    conn = connect(db_path)
+    try:
+        init_schema(conn)
+        categories = [r["name"] for r in conn.execute("SELECT name FROM categories ORDER BY name")]
+        from cruzar.llm import ollama_query_planner
+
+        planner = ollama_query_planner(
+            config.llm.model, config.llm.host, config.llm.timeout, categories
+        )
+        try:
+            return analytics.answer(
+                conn, question,
+                planner=planner,
+                today=today or _date.today(),
+                fetch=None,  # read-only: cached/manual rates only
+                investment_flow_patterns=config.investment_flow_patterns,
+            )
+        except LlmError as exc:
+            return f"The assistant couldn't reach the local LLM ({exc}). Is Ollama running?"
+    finally:
+        conn.close()
+
+
+def ingest_inbox(
+    conn: sqlite3.Connection, inbox_dir: Path, *, extractor: LlmExtractor | None = None
+) -> None:
     pdfs = sorted(inbox_dir.rglob("*.pdf"))
     if not pdfs:
         logger.info("no PDFs found in %s", inbox_dir)
@@ -117,40 +214,69 @@ def _ingest_inbox(conn: sqlite3.Connection, inbox_dir: Path) -> None:
 
         try:
             parser = get_parser(account["institution"])
-            statement = parser(pdf_path)
-        except (ActivoBankParseError, ValueError):
-            logger.error("parse failed, skipping %s", pdf_path.name)
+            result = parser(pdf_path)
+        except ExtractionFallback as fallback:
+            # AC4a: structured parse recovered <50% of columns. Hand the raw text to
+            # the LLM extractor (ADR-2). No extractor (LLM disabled) or an unusable
+            # result → extraction_failed, write nothing (fail loud), retried next run.
+            if extractor is None:
+                logger.error("layout too degraded and LLM disabled, skipping %s", pdf_path.name)
+                _record_file(conn, file_hash, pdf_path.name, "extraction_failed", None)
+                conn.commit()
+                failed += 1
+                continue
+            try:
+                result = extractor.extract(fallback.text)
+                logger.info("LLM extraction fallback for %s", pdf_path.name)
+            except LlmError:
+                logger.error("LLM extraction failed, skipping %s", pdf_path.name)
+                conn.rollback()
+                _record_file(conn, file_hash, pdf_path.name, "extraction_failed", None)
+                conn.commit()
+                failed += 1
+                continue
+        except (ParserError, ValueError) as exc:
+            # Any parser's failure (ADR-11 ParserError base) or a stray date/Decimal
+            # ValueError → mark this file parse_failed and continue; one bad statement
+            # never crashes the whole run (SPEC §Edge cases: fail loud, write nothing).
+            logger.error("parse failed, skipping %s (%s)", pdf_path.name, exc)
             conn.rollback()
             _record_file(conn, file_hash, pdf_path.name, "parse_failed", None)
             conn.commit()
             failed += 1
             continue
 
-        # statement period+account dedup (ADR-7): skip if already present.
-        dupe = conn.execute(
-            "SELECT id FROM statements WHERE account_id = ? AND period_start = ? "
-            "AND period_end = ?",
-            (account["id"], statement.period_start.isoformat(),
-             statement.period_end.isoformat()),
-        ).fetchone()
-        if dupe is not None:
-            logger.debug("statement period already ingested, skipping %s", pdf_path.name)
-            _record_file(conn, file_hash, pdf_path.name, "ok", dupe["id"])
-            conn.commit()
-            skipped += 1
-            continue
-
+        # A parser may return one statement or several (a stacked multi-month export →
+        # one per section, plan 023). Persist each; per-(account, period) dedup (ADR-7)
+        # skips sections already present — so re-uploading a single month that overlaps
+        # a combined statement adds nothing.
+        statements = result if isinstance(result, list) else [result]
         try:
-            # Statement first, then the processed_files row points at it
-            # (processed_files.statement_id -> statements). One-directional FK,
-            # no cycle, no backfill.
-            statement_id = persist_statement(conn, account["id"], statement)
-            _record_file(conn, file_hash, pdf_path.name, "ok", statement_id)
+            last_statement_id: int | None = None
+            new_count = 0
+            for statement in statements:
+                dupe = conn.execute(
+                    "SELECT id FROM statements WHERE account_id = ? AND period_start = ? "
+                    "AND period_end = ?",
+                    (account["id"], statement.period_start.isoformat(),
+                     statement.period_end.isoformat()),
+                ).fetchone()
+                if dupe is not None:
+                    last_statement_id = dupe["id"]
+                    continue
+                # Statement first, then the processed_files row points at it
+                # (processed_files.statement_id -> statements). One-directional FK,
+                # no cycle, no backfill.
+                last_statement_id = persist_statement(conn, account["id"], statement)
+                new_count += 1
+                logger.info("ingested %s (%s)", pdf_path.name, _ingest_summary(statement))
+            _record_file(conn, file_hash, pdf_path.name, "ok", last_statement_id)
             conn.commit()
-            logger.info(
-                "ingested %s (%d transactions)", pdf_path.name, len(statement.transactions)
-            )
-            ingested += 1
+            if new_count:
+                ingested += 1
+            else:
+                logger.debug("all statement periods already ingested, skipping %s", pdf_path.name)
+                skipped += 1
         except Exception:
             conn.rollback()
             _record_file(conn, file_hash, pdf_path.name, "parse_failed", None)

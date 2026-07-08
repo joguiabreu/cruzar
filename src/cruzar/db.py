@@ -50,6 +50,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
     _add_column_if_missing(
         conn, "accounts", "emits_cash_flows", "INTEGER NOT NULL DEFAULT 1"
     )
+    # ADR-8: restated-transaction flag (plan 013). DEFAULT 0 leaves existing rows
+    # un-superseded; conflicts.detect recomputes it each run.
+    _add_column_if_missing(
+        conn, "transactions", "superseded", "INTEGER NOT NULL DEFAULT 0"
+    )
     _make_cost_basis_nullable(conn)
 
 

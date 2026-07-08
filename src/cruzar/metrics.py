@@ -56,6 +56,16 @@ def month_end(ym: str) -> date:
     return date(year, month, calendar.monthrange(year, month)[1])
 
 
+def as_of(ym: str, today: date | None = None) -> date:
+    """The valuation date for ``ym``: its month-end, but never past ``today`` (ADR-5/16).
+
+    For a completed month this is ``month_end(ym)`` unchanged. For the IN-PROGRESS month
+    the month-end is in the future, where no FX rate can exist — so we value as-of
+    ``today`` instead, the latest date with a fetchable rate and the real latest snapshot.
+    ``today`` defaults to the wall clock; callers that need determinism inject it."""
+    return min(month_end(ym), today or date.today())
+
+
 def months_available(conn: sqlite3.Connection) -> list[str]:
     """All ``YYYY-MM`` months with activity (cash txns, statements, snapshots), newest first."""
     rows = conn.execute(
@@ -70,14 +80,30 @@ def months_available(conn: sqlite3.Connection) -> list[str]:
     return sorted({row[0] for row in rows}, reverse=True)
 
 
-def earned(conn: sqlite3.Connection, ym: str, *, fetch: Fetcher | None) -> Decimal:
-    """Cash-account inflows (amount > 0, not transfers) in ``ym``, in EUR."""
-    return _flow(conn, ym, positive=True, fetch=fetch)
+def earned(
+    conn: sqlite3.Connection, ym: str, *, fetch: Fetcher | None, today: date | None = None,
+    day_range: tuple[date, date] | None = None,
+) -> Decimal:
+    """Cash-account inflows (amount > 0, not transfers) in ``ym``, in EUR. ``day_range``
+    optionally clips the lines to an inclusive day window within the month (ADR-17)."""
+    return _flow(conn, ym, positive=True, fetch=fetch, today=today, day_range=day_range)
 
 
-def spent(conn: sqlite3.Connection, ym: str, *, fetch: Fetcher | None) -> Decimal:
-    """Cash-account outflows (amount < 0, not transfers) in ``ym``, in EUR (negative)."""
-    return _flow(conn, ym, positive=False, fetch=fetch)
+def spent(
+    conn: sqlite3.Connection, ym: str, *, fetch: Fetcher | None, today: date | None = None,
+    day_range: tuple[date, date] | None = None,
+) -> Decimal:
+    """Cash-account outflows (amount < 0, not transfers) in ``ym``, in EUR (negative).
+    ``day_range`` optionally clips the lines to an inclusive day window (ADR-17)."""
+    return _flow(conn, ym, positive=False, fetch=fetch, today=today, day_range=day_range)
+
+
+def net(
+    conn: sqlite3.Connection, ym: str, *, fetch: Fetcher | None, today: date | None = None
+) -> Decimal:
+    """Net cash flow in ``ym``, in EUR: ``earned + spent`` (Spent is negative, so
+    this is what stayed in the cash accounts). Pure composition — no new query."""
+    return earned(conn, ym, fetch=fetch, today=today) + spent(conn, ym, fetch=fetch, today=today)
 
 
 def net_worth(conn: sqlite3.Connection, on: date, *, fetch: Fetcher | None) -> Decimal:
@@ -155,7 +181,8 @@ def iv(conn: sqlite3.Connection, on: date, *, fetch: Fetcher | None) -> Decimal:
 
 
 def net_contrib(
-    conn: sqlite3.Connection, ym: str, patterns: list[str], *, fetch: Fetcher | None
+    conn: sqlite3.Connection, ym: str, patterns: list[str], *, fetch: Fetcher | None,
+    today: date | None = None,
 ) -> Decimal:
     """Net EXTERNAL cash flows into investment accounts in ``ym`` (ADR-14), in EUR.
     A txn counts iff its account ``emits_cash_flows`` AND it is either a detected
@@ -169,7 +196,7 @@ def net_contrib(
         "JOIN statements s ON t.statement_id = s.id "
         "JOIN accounts a ON s.account_id = a.id "
         f"WHERE a.account_type IN ({','.join('?' * len(_INVESTMENT_TYPES))}) "
-        "AND a.emits_cash_flows = 1 AND substr(t.date, 1, 7) = ?",
+        "AND a.emits_cash_flows = 1 AND t.superseded = 0 AND substr(t.date, 1, 7) = ?",
         (*_INVESTMENT_TYPES, ym),
     ).fetchall()
     by_currency: dict[str, Decimal] = defaultdict(lambda: Decimal(0))
@@ -179,7 +206,7 @@ def net_contrib(
         )
         if external:
             by_currency[row["currency"]] += Decimal(row["amount"])
-    end = month_end(ym)
+    end = as_of(ym, today)
     return sum(
         (fx.convert(conn, amount, currency, end, fetch=fetch) for currency, amount in by_currency.items()),
         Decimal(0),
@@ -187,13 +214,15 @@ def net_contrib(
 
 
 def portfolio_delta(
-    conn: sqlite3.Connection, ym: str, *, patterns: list[str], fetch: Fetcher | None
+    conn: sqlite3.Connection, ym: str, *, patterns: list[str], fetch: Fetcher | None,
+    today: date | None = None,
 ) -> Delta | None:
     """Portfolio Δ for ``ym`` (ADR-14): ``(IV_end − IV_prev) − NetContrib``, in EUR.
     Returns ``None`` (rendered ``—``) when no prior snapshot exists. ``flagged`` is set
     when an investment account can't emit cash flows, so its contributions are
-    undetected and its slice of Δ is gross."""
-    end = month_end(ym)
+    undetected and its slice of Δ is gross. ``end`` is the ``as_of`` date (capped at
+    ``today`` for the in-progress month); ``prev`` is always a past month-end."""
+    end = as_of(ym, today)
     prev = _prev_month_end(ym)
     prior = conn.execute(
         "SELECT 1 FROM holdings_snapshot h JOIN accounts a ON h.account_id = a.id "
@@ -205,7 +234,7 @@ def portfolio_delta(
         return None  # no prior snapshot → "—"
     flagged = _has_gross_account(conn, end)
     gross = iv(conn, end, fetch=fetch) - iv(conn, prev, fetch=fetch)
-    return Delta(gross - net_contrib(conn, ym, patterns, fetch=fetch), flagged)
+    return Delta(gross - net_contrib(conn, ym, patterns, fetch=fetch, today=today), flagged)
 
 
 def _has_gross_account(conn: sqlite3.Connection, on: date) -> bool:
@@ -261,23 +290,126 @@ def investment_holdings(conn: sqlite3.Connection, on: date) -> list[AccountHoldi
     return result
 
 
+def spending_by_category(
+    conn: sqlite3.Connection, ym: str, *, fetch: Fetcher | None, today: date | None = None,
+    day_range: tuple[date, date] | None = None,
+) -> list[tuple[str, Decimal]]:
+    """This month's cash spending grouped by category, in EUR (most-spent first).
+
+    Same filter as ``spent`` (cash accounts, amount < 0, not transfer, not superseded),
+    joined to ``merchants.category`` — spending with no matched merchant is bucketed as
+    ``Uncategorized`` so nothing is dropped and the totals sum to ``spent(ym)``. Summed
+    per (category, currency) then converted to EUR at the ``as_of`` rate (ADR-5),
+    most-spent first. ``day_range`` optionally clips to an inclusive day window (ADR-17)."""
+    return _group_spend(conn, ym, "COALESCE(m.category, 'Uncategorized')", fetch=fetch, today=today, day_range=day_range)
+
+
+def spending_by_merchant(
+    conn: sqlite3.Connection, ym: str, *, fetch: Fetcher | None, today: date | None = None,
+    day_range: tuple[date, date] | None = None,
+) -> list[tuple[str, Decimal]]:
+    """This month's cash spending grouped by matched merchant name, in EUR (most-spent
+    first). Same filter/method as ``spending_by_category``; spending with no matched
+    merchant is bucketed as ``Uncategorized``. ``day_range`` optionally clips to an
+    inclusive day window (ADR-17)."""
+    return _group_spend(conn, ym, "COALESCE(m.name, 'Uncategorized')", fetch=fetch, today=today, day_range=day_range)
+
+
+def income_by_source(
+    conn: sqlite3.Connection, ym: str, *, fetch: Fetcher | None, today: date | None = None,
+    day_range: tuple[date, date] | None = None,
+) -> list[tuple[str, Decimal]]:
+    """This month's cash income grouped by source, in EUR (most-earned first). Source =
+    matched merchant name else the raw description (the Earning Detail convention). Same
+    filter as ``earned``; the totals sum to ``earned(ym)``. ``day_range`` optionally clips
+    to an inclusive day window (ADR-17)."""
+    day_clause, day_params = _day_filter(day_range)
+    rows = conn.execute(
+        "SELECT a.currency AS currency, t.amount AS amount, "
+        "COALESCE(m.name, t.description_raw) AS source FROM transactions t "
+        "JOIN statements s ON t.statement_id = s.id "
+        "JOIN accounts a ON s.account_id = a.id "
+        "LEFT JOIN merchants m ON t.merchant_id = m.id "
+        f"WHERE a.account_type IN ({','.join('?' * len(_CASH_TYPES))}) "
+        "AND t.is_transfer = 0 AND t.superseded = 0 "
+        "AND t.amount NOT LIKE '-%' AND t.amount != '0.00' "
+        "AND substr(t.date, 1, 7) = ?" + day_clause,
+        (*_CASH_TYPES, ym, *day_params),
+    ).fetchall()
+    totals = _convert_grouped(conn, rows, key="source", ym=ym, fetch=fetch, today=today)
+    return sorted(totals.items(), key=lambda kv: (-kv[1], kv[0]))  # most-earned first
+
+
+def _day_filter(day_range: tuple[date, date] | None) -> tuple[str, tuple[str, ...]]:
+    """An optional inclusive ``t.date BETWEEN lo AND hi`` clip (ADR-17). FX is untouched:
+    conversion still happens per-month at the ``as_of`` rate (ADR-5) — this only narrows
+    which lines are summed, so a full-month clip is a no-op and reconciles with the month."""
+    if day_range is None:
+        return "", ()
+    lo, hi = day_range
+    return " AND t.date BETWEEN ? AND ?", (lo.isoformat(), hi.isoformat())
+
+
+def _group_spend(
+    conn: sqlite3.Connection, ym: str, key_expr: str, *, fetch: Fetcher | None,
+    today: date | None = None, day_range: tuple[date, date] | None = None,
+) -> list[tuple[str, Decimal]]:
+    day_clause, day_params = _day_filter(day_range)
+    rows = conn.execute(
+        f"SELECT a.currency AS currency, t.amount AS amount, {key_expr} AS grp "
+        "FROM transactions t "
+        "JOIN statements s ON t.statement_id = s.id "
+        "JOIN accounts a ON s.account_id = a.id "
+        "LEFT JOIN merchants m ON t.merchant_id = m.id "
+        f"WHERE a.account_type IN ({','.join('?' * len(_CASH_TYPES))}) "
+        "AND t.is_transfer = 0 AND t.superseded = 0 AND t.amount LIKE '-%' "
+        "AND substr(t.date, 1, 7) = ?" + day_clause,
+        (*_CASH_TYPES, ym, *day_params),
+    ).fetchall()
+    totals = _convert_grouped(conn, rows, key="grp", ym=ym, fetch=fetch, today=today)
+    return sorted(totals.items(), key=lambda kv: (kv[1], kv[0]))  # most-spent first
+
+
+def _convert_grouped(
+    conn: sqlite3.Connection,
+    rows: list[sqlite3.Row],
+    *,
+    key: str,
+    ym: str,
+    fetch: Fetcher | None,
+    today: date | None = None,
+) -> dict[str, Decimal]:
+    """Sum native amounts per (group, currency), then convert each to EUR at the
+    ``as_of`` rate (ADR-5) and total per group."""
+    by_grp_cur: dict[tuple[str, str], Decimal] = defaultdict(lambda: Decimal(0))
+    for row in rows:
+        by_grp_cur[(row[key], row["currency"])] += Decimal(row["amount"])
+    end = as_of(ym, today)
+    totals: dict[str, Decimal] = defaultdict(lambda: Decimal(0))
+    for (grp, currency), amount in by_grp_cur.items():
+        totals[grp] += fx.convert(conn, amount, currency, end, fetch=fetch)
+    return totals
+
+
 def _flow(
-    conn: sqlite3.Connection, ym: str, *, positive: bool, fetch: Fetcher | None
+    conn: sqlite3.Connection, ym: str, *, positive: bool, fetch: Fetcher | None,
+    today: date | None = None, day_range: tuple[date, date] | None = None,
 ) -> Decimal:
+    day_clause, day_params = _day_filter(day_range)
     rows = conn.execute(
         "SELECT a.currency AS currency, t.amount AS amount FROM transactions t "
         "JOIN statements s ON t.statement_id = s.id "
         "JOIN accounts a ON s.account_id = a.id "
         f"WHERE a.account_type IN ({','.join('?' * len(_CASH_TYPES))}) "
-        "AND t.is_transfer = 0 AND substr(t.date, 1, 7) = ?",
-        (*_CASH_TYPES, ym),
+        "AND t.is_transfer = 0 AND t.superseded = 0 AND substr(t.date, 1, 7) = ?" + day_clause,
+        (*_CASH_TYPES, ym, *day_params),
     ).fetchall()
     by_currency: dict[str, Decimal] = defaultdict(lambda: Decimal(0))
     for row in rows:
         amount = Decimal(row["amount"])
         if (amount > 0) is positive and amount != 0:
             by_currency[row["currency"]] += amount
-    end = month_end(ym)
+    end = as_of(ym, today)
     return sum(
         (fx.convert(conn, amount, currency, end, fetch=fetch) for currency, amount in by_currency.items()),
         Decimal(0),

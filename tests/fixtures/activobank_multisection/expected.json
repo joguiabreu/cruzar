@@ -1,0 +1,42 @@
+[
+  {
+    "currency": "EUR",
+    "period_start": "2025-12-02",
+    "period_end": "2025-12-30",
+    "closing_balance": "2900.00",
+    "transactions": [
+      {
+        "intra_statement_seq": 1,
+        "date": "2025-12-05",
+        "amount": "2000.00",
+        "description_raw": "TRANSFERENCIA - VENCIMENTO"
+      },
+      {
+        "intra_statement_seq": 2,
+        "date": "2025-12-10",
+        "amount": "-100.00",
+        "description_raw": "TRF P/ EXEMPLO UM"
+      }
+    ]
+  },
+  {
+    "currency": "EUR",
+    "period_start": "2026-01-02",
+    "period_end": "2026-01-30",
+    "closing_balance": "5700.00",
+    "transactions": [
+      {
+        "intra_statement_seq": 1,
+        "date": "2026-01-06",
+        "amount": "3000.00",
+        "description_raw": "TRANSFERENCIA - VENCIMENTO"
+      },
+      {
+        "intra_statement_seq": 2,
+        "date": "2026-01-12",
+        "amount": "-200.00",
+        "description_raw": "COMPRA 0002 Spotify TESTREF0002 Stockholm SE"
+      }
+    ]
+  }
+]

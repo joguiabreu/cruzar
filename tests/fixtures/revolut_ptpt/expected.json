@@ -1,0 +1,32 @@
+{
+  "currency": "EUR",
+  "period_start": "2026-01-05",
+  "period_end": "2026-01-20",
+  "closing_balance": "1749.94",
+  "transactions": [
+    {
+      "intra_statement_seq": 1,
+      "date": "2026-01-05",
+      "amount": "-10.00",
+      "description_raw": "EXAMPLE GROCER"
+    },
+    {
+      "intra_statement_seq": 2,
+      "date": "2026-01-10",
+      "amount": "2000.00",
+      "description_raw": "Carregamento com Google Pay atrav\u00e9s de Example"
+    },
+    {
+      "intra_statement_seq": 3,
+      "date": "2026-01-15",
+      "amount": "-5.50",
+      "description_raw": "EXAMPLE SUBSCRIPTION"
+    },
+    {
+      "intra_statement_seq": 4,
+      "date": "2026-01-20",
+      "amount": "-1234.56",
+      "description_raw": "EXAMPLE SHOP"
+    }
+  ]
+}

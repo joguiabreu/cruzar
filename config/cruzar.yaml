@@ -1,11 +1,33 @@
 # Cruzar app config. Base currency is hardcoded EUR for v1 (ADR-5).
 base_currency: EUR
-llm_model: qwen3:8b
+
+# Local LLM categorization (ADR-2/13). For transactions no merchant pattern matched,
+# Ollama proposes a merchant + category; confident, in-vocabulary proposals are applied
+# (merchant_source='llm'), the rest land in the report's Needs-Categorization section.
+# Proposals are persisted and never recomputed (ADR-12) — a re-run makes zero calls.
+# enabled:false keeps the run fully offline (rule-only). If Ollama is unreachable the
+# run still completes; affected lines stay uncategorized and retry next run.
+llm:
+  enabled: true
+  model: qwen2.5:3b # any Ollama model string — use a NON-thinking model (reasoning models
+                    # like qwen3.x emit <think>, are slow, and truncate the JSON on Ollama)
+  host: http://localhost:11434
+  min_confidence: 0.7 # below this, a proposal is shown but not auto-assigned
+  timeout_seconds: 60 # per request; if Ollama is down the run fails fast and skips
+  # `cruzar anonymize` can override the model/timeout (it's not time-critical). Unset -> uses
+  # the values above, which works well: the anonymizer only asks the model to NAME the personal-
+  # data tokens to replace (Python force-replaces every amount/date/id deterministically), so even
+  # a small model preserves structure. Only use a model that TERMINATES under Ollama's
+  # structured-JSON output — some (e.g. gemma4) run away to max_tokens and stall. Same-family
+  # scale-ups (e.g. qwen2.5:7b/14b) are the safe bump if you want sharper name detection.
+  anonymize_model: qwen2.5:14b        # catches free-text names the 3B misses (8 vs 0 on a real
+                                      # statement); ~7x slower, fine for an occasional operator tool
+  anonymize_timeout_seconds: 300      # 14b generates slower per chunk; give it room
 
 # FX rates (ADR-5). A report's month-end rate is fetched once and persisted, then
 # reused (reproducible). This is the only external network call Cruzar makes — it
 # sends just a currency pair + date, never financial data.
 fx:
-  offline: false          # true → never fetch; use only cached/manual rates
+  offline: false # true → never fetch; use only cached/manual rates
   timeout_seconds: 10
   # access_key:           # optional exchangerate.host key; without it, ECB is used

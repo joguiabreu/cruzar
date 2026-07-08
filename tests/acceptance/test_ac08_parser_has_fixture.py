@@ -34,12 +34,14 @@ def _serialize(statement: ParsedStatement) -> dict[str, object]:
 
 def test_ac08_parser_has_fixture() -> None:
     expected = json.loads((FIXTURE_DIR / "expected.json").read_text(encoding="utf-8"))
-    statement = parse(FIXTURE_DIR / "statement.pdf")
-    assert _serialize(statement) == expected
+    # A single-month statement is the degenerate one-section case → a 1-element list.
+    statements = parse(FIXTURE_DIR / "statement.pdf")
+    assert len(statements) == 1
+    assert _serialize(statements[0]) == expected
 
 
 def test_ac08_balance_identity() -> None:
-    statement = parse(FIXTURE_DIR / "statement.pdf")
+    (statement,) = parse(FIXTURE_DIR / "statement.pdf")
     saldo_inicial = Decimal("1000.00")  # synthetic fixture (generate_fixture.py)
     total = sum((t.amount for t in statement.transactions), Decimal("0"))
     assert saldo_inicial + total == statement.closing_balance == Decimal("2450.00")

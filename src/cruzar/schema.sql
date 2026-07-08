@@ -66,6 +66,11 @@ CREATE TABLE IF NOT EXISTS transactions (
     description_raw     TEXT NOT NULL,    -- immutable
     intra_statement_seq INTEGER NOT NULL, -- line ordinal within statement; feeds content_hash
     is_transfer         INTEGER NOT NULL DEFAULT 0,
+    -- ADR-8: a restated line on a LATER statement hashes differently (amount
+    -- changed) and survives dedup as a second row. conflicts.detect sets this 1
+    -- on the later leg; aggregates exclude it so it's never double-counted. The
+    -- earliest leg (first write) stays 0 and is kept.
+    superseded          INTEGER NOT NULL DEFAULT 0,
     merchant_id         INTEGER REFERENCES merchants(id),  -- nullable, mutable
     merchant_source     TEXT NOT NULL DEFAULT 'none' CHECK (merchant_source IN ('manual', 'rule', 'llm', 'none')),
     content_hash        TEXT NOT NULL UNIQUE
@@ -89,4 +94,20 @@ CREATE TABLE IF NOT EXISTS fx_rates (
     quote_currency TEXT NOT NULL,
     rate           TEXT NOT NULL,
     PRIMARY KEY (date, base_currency, quote_currency)
+);
+
+-- Persisted LLM categorization proposals (ADR-2/12/13). Keyed by exact raw
+-- description so an identical line reuses one proposal and a re-run makes zero
+-- LLM calls. 'applied' rows were confident + in-vocabulary and linked a merchant;
+-- 'needs_review' rows (low confidence or off-vocabulary category) are surfaced in
+-- the report's Needs-Categorization section but never auto-assigned. An LLM OUTAGE
+-- writes nothing here, so the line is retried when the model is back.
+CREATE TABLE IF NOT EXISTS llm_categorizations (
+    description_raw   TEXT PRIMARY KEY,
+    proposed_merchant TEXT NOT NULL,
+    proposed_category TEXT NOT NULL,
+    confidence        REAL NOT NULL,
+    status            TEXT NOT NULL CHECK (status IN ('applied', 'needs_review')),
+    model             TEXT NOT NULL,
+    created_at        TEXT NOT NULL
 );

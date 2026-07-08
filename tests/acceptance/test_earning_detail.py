@@ -35,8 +35,10 @@ def _stmt(txns: list[ParsedTransaction]) -> ParsedStatement:
 
 
 def _earning_block(content: str) -> str:
-    # Earning Detail is the last section, so everything after its header.
-    return content.split("## Earning Detail", 1)[1]
+    # Just the Earning Detail section: from its header to the next "## " section
+    # (Investment Detail / Needs Categorization now follow it).
+    after = content.split("## Earning Detail", 1)[1]
+    return after.split("\n## ", 1)[0]
 
 
 def test_earning_detail_lists_income_and_reconciles(tmp_path: Path) -> None:

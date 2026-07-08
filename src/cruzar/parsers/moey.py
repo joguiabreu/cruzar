@@ -25,7 +25,7 @@ from typing import Any
 import pdfplumber
 
 from cruzar.models import ParsedStatement, ParsedTransaction
-from cruzar.parsers._common import cluster_rows, parse_pt_month_date, row_text
+from cruzar.parsers._common import ParserError, cluster_rows, parse_pt_month_date, row_text
 
 # A transaction date token: DD-MM-YYYY (DATA LANÇAMENTO / DATA VALOR).
 _DATE_RE = re.compile(r"^\d{2}-\d{2}-\d{4}$")
@@ -44,7 +44,7 @@ _PERIOD_RE = re.compile(
 _CURRENCY_RE = re.compile(r"Extracto em ([A-Z]{3})")
 
 
-class MoeyParseError(Exception):
+class MoeyParseError(ParserError):
     """Raised when the Moey statement layout cannot be parsed."""
 
 

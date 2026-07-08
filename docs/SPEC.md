@@ -90,9 +90,12 @@ saves you the most time later.>
   - investment_flow_patterns: description rules identifying external
     contributions/withdrawals on investment accounts (e.g. employer
     contribution, external ACH deposit), used by ADR-14.
-- App config: /config/cruzar.yaml — base_currency (hardcoded EUR), llm_model
-  (Ollama model string, default `qwen3:8b`), fx provider settings.
-- Local LLM: Qwen 3 8B via Ollama. Config-driven and swappable; persisted
+- App config: /config/cruzar.yaml — base_currency (hardcoded EUR), llm settings
+  (Ollama model/host/min_confidence/timeout; default model `llama3.2:3b`), fx provider settings.
+- Local LLM via Ollama: a small, **non-reasoning** model. Default `llama3.2:3b`.
+  Categorization is a short labeling task, so a "thinking" model (e.g. `qwen3:8b`) is a
+  poor fit — it emits 1000+ reasoning tokens per call and times out on consumer hardware
+  (~14 tok/s); a non-thinking 3B answers in ~1s. Config-driven and swappable; persisted
   extractions can be cleared and rerun with `cruzar process --reextract`
   (ADR-12). Recommended: validate extraction quality on real redacted
   fixtures before relying on it.
@@ -133,6 +136,9 @@ period-end rate per ADR-5).
   dividends credited to a cash account.
 - **Spent:** SUM(amount) over transactions in M on **cash accounts** where
   amount < 0 AND is_transfer = false. (Negative.)
+- **Net:** Earned + Spent — net cash flow for M (what stayed in the cash
+  accounts). Derived from the two columns above; no new query. Negative when
+  Spent exceeds Earned.
 - **Portfolio Δ:** total return net of contributions, over investment
   accounts — see ADR-14. Shows "—" when no prior snapshot exists.
 - **Net Worth:** base-currency total, at M's month-end, over all non-closed
@@ -148,7 +154,7 @@ period-end rate per ADR-5).
   currency**; Grand Total in **base currency**.
 
 Section 1: Summary
-Columns: Month | Earned | Spent | Portfolio Δ | Net Worth
+Columns: Month | Earned | Spent | Net | Portfolio Δ | Net Worth
 One row per month, descending. Up to last 12 months of available data; fewer
 if less history. No padding rows.
 
@@ -156,6 +162,13 @@ Section 2: Spending Detail (this month)
 Columns: Date | Amount | Currency | Merchant | Category
 Transactions on cash accounts where amount < 0 AND is_transfer = false, this
 month only. Sorted by date descending.
+
+Section 2b: Spending by Category (this month)
+Columns: Category | Spent (EUR)
+This month's cash spending (the same rows as Spending Detail) grouped by the matched
+merchant's category, summed and converted to base (EUR) at the month-end rate (ADR-5).
+Spending with no matched merchant is bucketed as `Uncategorized`; rows sort
+most-spent-first. The rows sum to the Summary's Spent for the month.
 
 Section 3: Earning Detail (this month)
 Columns: Date | Amount | Currency | Source
@@ -175,6 +188,13 @@ Total" subsection are in base currency (converted at the month-end rate).
 Section 5 (conditional): Needs Categorization
 Shown iff un-categorized merchants exist.
 Columns: Raw Description | LLM-Proposed Merchant | LLM-Proposed Category
+
+Section 6 (conditional): Conflicts
+Shown iff a restated transaction exists this month (ADR-8). A later statement
+re-listed a line with a different amount, so it lands as a second row, flagged
+`superseded`; the earliest (first-write) leg is kept and counted, the later one
+is excluded — surfaced here, never merged. Native currency.
+Columns: Date | Account | Description | Amount (kept) | Amount (restated)
 
 ## Data model
 
@@ -232,7 +252,10 @@ Columns: Raw Description | LLM-Proposed Merchant | LLM-Proposed Category
   same amount/description, collide. See Known limitations.
 - First-write-wins (ADR-8): a corrected/restated transaction on a later
   statement hashes differently → lands as a second row; flagged per AC14,
-  never silently merged.
+  never silently merged. Restatement detection keys on
+  `(account_id, date, description_raw)` across ≥2 statements — `intra_statement_seq`
+  is excluded because it drifts when a line reappears amid different neighbours,
+  and same-statement same-key lines are independent (never coalesced).
 
 ### holdings_snapshot
 
@@ -286,7 +309,8 @@ Columns: Raw Description | LLM-Proposed Merchant | LLM-Proposed Category
 - ADR-2: LLM produces only JSON conforming to declared schemas (via `instructor`/`outlines`).
 - ADR-3: SQLite is the source of truth; reports are derived, safe to regenerate. yaml configs are editable inputs seeded into SQLite, not a competing runtime source of truth.
 - ADR-4: Each pipeline step independently runnable and idempotent (fetch → parse → normalize → categorize → report).
-- ADR-5: **Single-base (EUR).** Data stored native; conversion at report time using the `fx_rates` row as of the relevant **period-end date**. No per-transaction-date conversion.
+- ADR-5: **Single-base (EUR).** Data stored native; conversion at report time using the `fx_rates` row as of the relevant **valuation date**: a month's **period-end date**, but never later than **today** (`min(month_end, today)`). No per-transaction-date conversion.
+  - For a completed month the valuation date is its month-end (unchanged). For the **in-progress month** the month-end is in the future, where no rate can exist — so it is valued as-of today (the latest fetchable rate and latest snapshot). A consequence: the in-progress month is not reproducible across calendar days; completed months remain reproducible (AC10).
   - fx_rates is a valuation table, not a transaction-FX record. Transaction-time FX is neither captured nor needed (cost_basis native, per-account gain computed natively, aggregate statements lack per-purchase rates).
   - Stock vs flow caveat: period-end conversion is exact for stocks (Net Worth, holdings value), an approximation for flows (Earned, Spent, Portfolio Δ); error is unsigned. Accepted.
   - Source: exchangerate.host `/timeseries`, ECB fallback. Persisted → reproducible.
@@ -295,7 +319,7 @@ Columns: Raw Description | LLM-Proposed Merchant | LLM-Proposed Category
 - ADR-8: First write wins; conflicting restatements that present as new rows are flagged, never merged (AC14).
 - ADR-9: Secrets (OAuth tokens) in macOS Keychain via `keyring`, never plaintext on disk.
 - ADR-10: Two ingestion paths converge at `/data/inbox/` (resolution differs by path — see Account resolution).
-- ADR-11: One parser module per institution format in /parsers/, common interface `parse(pdf_path) → ParsedStatement`, emitting lines in deterministic top-to-bottom order. Investment parsers MUST also emit (a) closing_balance and (b) cash-flow transactions (deposits/withdrawals/transfers) so ADR-14 can detect contributions. Quirks isolated per parser; core pipeline institution-agnostic.
+- ADR-11: One parser module per institution format in /parsers/, common interface `parse(pdf_path) → ParsedStatement | list[ParsedStatement]`, emitting lines in deterministic top-to-bottom order. A parser MAY return several statements for a single file that stacks multiple periods (e.g. an ActivoBank multi-month export → one statement per monthly section, in document order; each keeps its own period, closing_balance, and per-statement `intra_statement_seq`); `ingest_inbox` normalizes both shapes and dedups each statement (ADR-7). Keeping months distinct is what makes per-month Net Worth (ADR-16) and overlapping-upload dedup correct. Investment parsers MUST also emit (a) closing_balance and (b) cash-flow transactions (deposits/withdrawals/transfers) so ADR-14 can detect contributions. Quirks isolated per parser; core pipeline institution-agnostic.
 - ADR-12: LLM outputs persisted to SQLite and never recomputed on reprocessing. A second run of an already-processed file invokes the LLM zero times. `cruzar process --reextract` clears persisted extractions for named files to force re-run (e.g. after a model swap). Makes ADR-4/AC1 hold despite model nondeterminism.
 - ADR-13: Categorization provenance three-tier by **authority**: `manual` > `rule` > `llm`.
   - `manual`: frozen; set only by `cruzar recategorize <id> --set <merchant>`; never overwritten.
@@ -314,7 +338,19 @@ Columns: Raw Description | LLM-Proposed Merchant | LLM-Proposed Category
   1. Description rules from `transfer_patterns` in /config/flows.yaml.
   2. Account-pair matching: an opposite-signed transaction of the same absolute amount on another tracked account within ±3 calendar days → mark BOTH `is_transfer = true` (symmetric).
      Step 3 (review appendix) deferred to v1.1. Residual: uncaught transfers leak into Earned/Spent — accepted.
-- ADR-16: **Net Worth** at month-end M = base-currency sum, over accounts not closed as of M, of `statements.closing_balance` (latest statement ≤ M per account) + Σ `holdings_snapshot.value` (latest snapshot ≤ M). Closed accounts are excluded from the most-recent row but remain in historical rows preceding their closed_at.
+- ADR-16: **Net Worth** at month-end M = base-currency sum, over accounts not closed as of M, of `statements.closing_balance` (latest statement ≤ M per account) + Σ `holdings_snapshot.value` (latest snapshot ≤ M). Closed accounts are excluded from the most-recent row but remain in historical rows preceding their closed_at. For the **in-progress month** M is valued as-of today (`min(month_end, today)`, ADR-5) — its month-end is in the future where no FX rate exists; the snapshot/statement "≤" cutoff uses that same date.
+- ADR-17: **Conversational queries (`cruzar ask`) — the LLM plans, Python computes.** A free-form question is mapped by the local LLM to ONE entry in a bounded, typed query catalog (`QuerySpec`) — it selects a query and fills parameters (period, category, top-N); it never sums, converts, or authors a figure (ADR-1 stands). Python executes the query over `metrics`/`Decimal` and renders the answer from the computed result, so answers reconcile with the reports. Local model only (privacy); read-only (cached FX, like `report`). An unmappable question returns an honest capability message — never a fabricated answer; it is a reader, not an advisor. The catalog is the stable port: `cruzar ask` is the first adapter, an MCP server can be another over the same catalog. Periods resolve to inclusive **day** bounds (plan 025): flow queries (spend/income) honor day granularity — explicit `YYYY-MM-DD` windows, `last_n_days`, `this_month`, `last_month` — while point-in-time/series metrics (net worth, performance) stay month/snapshot-grained (no daily snapshots exist). FX still converts per-month at the as-of rate (ADR-5): a day window only clips which lines sum, so a full-month window reconciles with the month. **AC23** gates the deterministic half (`run(QuerySpec)` reconciles with the ledger); the non-deterministic NL→spec mapping is not gated by an AC — offline tests inject a fake planner, a live Ollama run is its gate.
+
+### Conversational queries (`cruzar ask`)
+
+`cruzar ask "<question>"` answers questions like "how much did I spend on Dining in
+the last 6 months?", "what was my main source of spending last year?", "how have my
+investments been going?". v1 catalog: total/by-category/by-merchant spending, total
+income / income by source, net worth (point-in-time or monthly trend), and investment
+performance (range Portfolio Δ) — each over a relative or explicit period. Spending and
+income answer at **day** granularity too: an explicit day window ("from the 10th to the
+30th of June" — e.g. a vacation), "the last 10 days", "this month", "last month". See
+ADR-17; design notes in `docs/design/query_planner.md`.
 
 ## Acceptance criteria
 
@@ -325,13 +361,13 @@ Columns: Raw Description | LLM-Proposed Merchant | LLM-Proposed Category
   - Native (exact): per-account report sums equal `SUM(transactions.amount)` over the same account, period, account-class, and is_transfer filter.
   - Base (method-consistent): converted Summary figures equal the reconciliation script's own ADR-5 conversion. Asserts same method, not converted == native.
 - AC3: No content_hash appears twice in the DB.
-- AC4: The LLM is invoked only for (a) extraction when pdfplumber returns <50% of expected columns, and (b) categorization of merchants unmatched by any pattern, and only when no persisted prior result exists (ADR-12). Verified by log inspection.
+- AC4: The LLM is invoked only for (a) extraction when pdfplumber returns <50% of expected columns, and (b) categorization of merchants unmatched by any pattern, and only when no persisted prior result exists (ADR-12). Verified by log inspection. (Implementation note: both clauses implemented. Clause (a): a parser raises `ExtractionFallback` carrying the raw page text when fewer than 50% of its candidate transaction rows resolve an amount column; the pipeline hands that text to the LLM extractor, which emits printed values + a debit/credit direction — Python applies the sign and parses to Decimal (ADR-1). An unusable extraction → `extraction_failed`, nothing written, retried next run. v1 ships the trigger for the ActivoBank parser.)
 - AC5: No secret material on disk outside the Keychain. Smoke test: `grep -rI "ya29\|refresh_token" .` finds nothing in project files AND a scan of the DB file finds no token-shaped values. (Necessary-not-sufficient.)
 - AC6: Each investment statement creates exactly one holdings_snapshot row per holding, dated period_end, linked via statement_id; existing rows never UPDATEd/DELETEd. Verified by grouping snapshots by statement_id.
 - AC7: Adding an account requires only one sources.yaml entry, (if format differs) one parser module, one test fixture. No core pipeline changes.
 - AC8: Every parser module has ≥1 fixture (redacted PDF + expected JSON). Runs on every commit.
-- AC9: The report contains Summary, Spending Detail, Earning Detail, Investment Detail in order, plus an optional Needs-Categorization section iff un-categorized merchants exist. Schemas/currencies as in Outputs.
-- AC10: Converted figures use the `fx_rates` row whose `date` = the report's month-end (ADR-5); fetched+persisted if absent. Fixture: one foreign-currency account, regenerate the same month on two calendar days → identical converted output.
+- AC9: The report contains Summary, Spending Detail, Spending by Category, Earning Detail, Investment Detail in order, plus an optional Needs-Categorization section iff un-categorized merchants exist and an optional Conflicts section iff a restated transaction exists this month (ADR-8). Schemas/currencies as in Outputs; the Summary carries a **Net** column (Earned + Spent) between Spent and Portfolio Δ.
+- AC10: Converted figures use the `fx_rates` row whose `date` = the month's **valuation date** (`min(month_end, today)`, ADR-5); fetched+persisted if absent. For a **completed** month this is the month-end, so regenerating it on two calendar days → identical converted output (fixture: one foreign-currency account). The **in-progress** month is valued as-of today, so it is deliberately not reproducible across days — a second fixture asserts its holdings convert at today, not the future month-end.
 - AC11: Debits negative, credits positive; no amount+type split. Verified by MIN/MAX(amount).
 - AC12: Every transaction has non-null account_id via the FK chain; no orphans. Statements failing resolution are unresolved_account with zero transactions. Verified by LEFT JOIN.
 - AC13: `cruzar report` is read-only w.r.t. the DB. Verified by DB sha256 before/after.
@@ -344,6 +380,7 @@ Columns: Raw Description | LLM-Proposed Merchant | LLM-Proposed Category
 - AC20: Portfolio Δ = (IV_end − IV_prev) − NetContrib (ADR-14). Fixtures: (i) a contribution from checking→brokerage is subtracted (Δ unaffected by the transfer itself); (ii) an internal buy funded by existing cash leaves Δ unchanged; (iii) a price-only rise raises Δ by exactly that amount; (iv) no prior snapshot renders "—"; (v) an account that cannot emit cash flows (`emits_cash_flows=0`) yields a gross figure flagged "(gross — contributions undetected)" — the contribution is NOT subtracted.
 - AC21: A transfer pair (opposite-signed, equal magnitude, two tracked accounts, ±3 days) is excluded from both Earned and Spent and both legs carry is_transfer = true. Fixture.
 - AC22: Net Worth = Σ closing_balance + Σ holdings value over non-closed accounts at month-end (ADR-16). A closed account is excluded from the most-recent row but present in historical rows preceding closure. Fixture spanning the closure date.
+- AC23: Conversational queries reconcile with the ledger (ADR-17). For a seeded ledger, `analytics.run` over a `QuerySpec` returns figures equal to the independently-summed ledger total for the resolved period — across spend total, spend by category, spend by merchant, and income. Day-level periods: a full-month day-range equals the month total, an explicit day window sums only the in-window lines, and `last_month` resolves to the prior calendar month (never the current one or the next month's spending). Offline, driven through the catalog directly (no Ollama); the LLM's NL→spec mapping stays a live-run gate, not an AC.
 
 ## Edge cases & failure modes
 
@@ -361,7 +398,10 @@ Columns: Raw Description | LLM-Proposed Merchant | LLM-Proposed Category
 - FX API down → use most recent cached rate, flag in report.
 - Network down → all DB writes atomic; complete or rollback.
 - New merchant unmatched + LLM low-confidence → "Needs Categorization", no auto-assign.
-- LLM proposes off-vocabulary category → treat as un-categorized; no silent new category.
+- Off-vocabulary category is prevented by construction: the LLM's `category` field is
+  grammar-constrained (JSON_SCHEMA) to a `Literal` of the controlled vocabulary, so it
+  can only pick a real category. A post-check still treats any non-vocab value as
+  un-categorized (defence in depth); no silent new category is ever created.
 - Merchant pattern removed between runs → affected `rule` rows cleared to `none`, reappear in "Needs Categorization"; `manual`/`llm` unaffected.
 - Rule added matching an `llm` row → rule wins (AC18); `manual` untouched.
 - Account first appears mid-history → "Tracking since YYYY-MM-DD" footer per account.

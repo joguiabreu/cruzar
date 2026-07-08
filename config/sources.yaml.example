@@ -33,3 +33,10 @@ accounts:
     source_type: manual
     account_type: brokerage
     currency: EUR
+  - institution: aforronet
+    name: Conta Aforro
+    account_match: aforronet           # files in data/inbox/aforronet/ (Certificados de Aforro)
+    source_type: manual
+    account_type: brokerage            # bond-like savings certificates held as a position
+    currency: EUR
+    emits_cash_flows: false            # position snapshot, no movements ledger (ADR-14): Portfolio Δ shown gross

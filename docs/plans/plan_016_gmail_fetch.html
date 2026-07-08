@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plan 016 — cruzar fetch (Gmail)</title>
+<style>
+  :root { color-scheme: dark; }
+  body { background:#0f1115; color:#d7dbe0; font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; max-width:880px; margin:0 auto; padding:2.5rem 1.5rem 6rem; }
+  h1 { color:#fff; font-size:1.7rem; border-bottom:1px solid #2a2f3a; padding-bottom:.5rem; }
+  h2 { color:#8ab4f8; margin-top:2.2rem; font-size:1.25rem; }
+  h3 { color:#c8a8ff; font-size:1.05rem; margin-top:1.4rem; }
+  code { background:#1b1f27; padding:.12em .4em; border-radius:4px; font-size:.9em; color:#f0c674; }
+  pre { background:#1b1f27; padding:1rem; border-radius:8px; overflow-x:auto; border:1px solid #2a2f3a; }
+  pre code { background:none; color:#d7dbe0; padding:0; }
+  table { border-collapse:collapse; width:100%; margin:1rem 0; }
+  th,td { border:1px solid #2a2f3a; padding:.5rem .7rem; text-align:left; vertical-align:top; }
+  th { background:#1b1f27; color:#fff; }
+  .decision { background:#1a1410; border:1px solid #5a4420; border-left:4px solid #f0a020; padding:.8rem 1rem; border-radius:6px; margin:1rem 0; }
+  .decision .tag { color:#f0a020; font-weight:700; font-size:.8rem; letter-spacing:.04em; text-transform:uppercase; }
+  .warn { background:#1a1012; border:1px solid #5a2424; border-left:4px solid #f05050; padding:.8rem 1rem; border-radius:6px; }
+  .rec { color:#3fbf5f; font-weight:600; }
+  .muted { color:#8a909a; }
+  ul,ol { padding-left:1.3rem; } li { margin:.3rem 0; }
+</style>
+</head>
+<body>
+
+<h1>Plan 016 — <code>cruzar fetch</code> (Gmail ingestion)</h1>
+
+<p><strong>Slice goal.</strong> Add the last unbuilt command, <code>cruzar fetch</code>: poll Gmail,
+apply the per-account sender + subject allowlist from <code>sources.yaml</code>, and download PDF
+attachments into <code>data/inbox/&lt;account_match&gt;/</code> — where <code>cruzar process</code>
+then ingests them (SPEC §Inputs, ADR-4/9/10-path). This is the <em>email</em> ingestion path that
+converges with the manual path at <code>data/inbox/</code>.</p>
+
+<div class="warn">
+<strong>Two things that make this slice different from 001–015:</strong>
+<ul>
+<li><strong>Not AC-gated.</strong> The acceptance harness (AC1–AC22) is already complete; no
+numbered AC tests fetch. "Done" here = fake-injected offline tests + ruff/pyright/pytest green +
+a <strong>real-run gate</strong> (you run it against your real mailbox). It also exercises ADR-9
+(secrets in Keychain), which <code>AC5</code> guards.</li>
+<li><strong>New dependencies + a Google Cloud prerequisite.</strong> Needs <code>keyring</code> and
+the Google API client, and you must create a Google Cloud OAuth client (enable the Gmail API,
+download the client JSON) before the real run — I can't do that part.</li>
+</ul>
+</div>
+
+<h2>Decisions needing your sign-off</h2>
+
+<div class="decision">
+<span class="tag">D1 — libraries</span>
+<p>Add <code>google-api-python-client</code> + <code>google-auth-oauthlib</code> (official Gmail
+client &amp; OAuth flow) and <code>keyring</code> (Keychain). <span class="rec">Recommended</span>
+over hand-rolled HTTP/OAuth — token refresh, retries, and the consent flow are fiddly and the
+official libs are the well-trodden path. Imports kept local to the fetch module so the rest of the
+app (and the offline suite) never loads them.</p>
+</div>
+
+<div class="decision">
+<span class="tag">D2 — auth &amp; secret storage (ADR-9)</span>
+<p>OAuth <em>installed-app</em> flow. The <strong>refresh token</strong> (the durable secret) is
+stored in the macOS Keychain via <code>keyring</code> (service <code>cruzar-gmail</code>), never on
+disk; access tokens stay in memory. First run (<code>cruzar fetch --login</code>) opens a browser
+for consent and persists the refresh token; later runs load it and refresh silently.</p>
+<p>The OAuth <strong>client</strong> config (client_id/secret JSON from Google Cloud) is
+<em>user-provided, gitignored</em> config at a path set in <code>cruzar.yaml</code>
+(<code>gmail.client_secret_path</code>). For an installed app the client secret isn't a true
+credential (it can't act without the user's consent), so treating it as gitignored config — while
+the actual <em>tokens</em> live only in Keychain — satisfies ADR-9 / AC5. <span class="rec">Recommended;</span>
+flag if you'd rather the client JSON also go through Keychain.</p>
+</div>
+
+<div class="decision">
+<span class="tag">D3 — what <code>fetch</code> does (scope boundary)</span>
+<p>For each <code>source_type: email</code> account: build a Gmail query from its
+<code>sender_match</code> + <code>subject_match</code> (+ <code>has:attachment filename:pdf</code>),
+list matching messages, skip already-fetched ones, download each PDF attachment to
+<code>data/inbox/&lt;account_match&gt;/</code>, and record it. <strong>It does not run
+<code>process</code></strong> — fetch and process are separate idempotent steps (ADR-4); you run
+<code>process</code> after. Rate-limit / transient HTTP errors → exponential backoff; a sustained
+failure aborts the run cleanly (nothing half-written). <span class="rec">Recommended.</span></p>
+</div>
+
+<div class="decision">
+<span class="tag">D4 — resume / dedup state</span>
+<p>A new <code>fetched_messages(message_id PK, account_match, fetched_at)</code> table in the DB:
+a Gmail message is downloaded once; re-running resumes cheaply and idempotently (the
+fetch analogue of file-hash dedup). <span class="rec">Recommended</span> over a loose state file —
+SQLite is the source of truth (ADR-3) and this stays transactional. Adds one guarded
+<code>db._migrate</code> step (schema-parity safe). <span class="muted">Alternative if you'd rather
+not touch the schema: a gitignored <code>data/fetch_state.json</code>. Say which.</span></p>
+</div>
+
+<div class="decision">
+<span class="tag">D5 — config schema</span>
+<p><code>AccountConfig</code> gains optional <code>sender_match</code> / <code>subject_match</code>
+(email-only; default <code>None</code>) so <code>AccountConfig(**entry)</code> still accepts manual
+entries. <code>fetch</code> validates: an <code>email</code> account must have both; a
+<code>manual</code> account ignores them. These stay <strong>config-only</strong> (read from
+sources.yaml at fetch time), not a DB column. <span class="rec">Recommended.</span></p>
+</div>
+
+<div class="decision">
+<span class="tag">D6 — multi-account-in-one-email (known break)</span>
+<p>Per-account queries route each attachment to the querying account's folder. If one message
+matches two accounts it downloads into both folders; <code>process</code>'s file-hash dedup keeps
+the first and skips the rest — the documented v1 "can't split one email across two accounts"
+limitation (SPEC §Edge cases), flagged, not split. <span class="rec">No new work; confirm acceptable.</span></p>
+</div>
+
+<h2>Design</h2>
+<h3>New module <code>fetch.py</code></h3>
+<ul>
+<li><code>GmailClient</code> Protocol — <code>search(query) -&gt; list[MessageRef]</code> and
+    <code>attachments(message_id) -&gt; list[(filename, bytes)]</code> — so the network client is
+    injectable and tests pass a fake (the offline-suite pattern from the LLM tier).</li>
+<li><code>fetch(conn, config, inbox_dir, *, client) -&gt; FetchSummary</code>: per email account,
+    query → skip known message_ids → download PDFs to the account folder → record in
+    <code>fetched_messages</code>. Pure orchestration; no Google imports here.</li>
+<li>Google specifics (OAuth, token refresh via Keychain, the real <code>GmailClient</code>) live in
+    a thin builder <code>google_gmail_client(client_secret_path)</code> with local imports —
+    mirrors how <code>llm.ollama_*</code> isolates instructor/openai.</li>
+</ul>
+<h3>CLI</h3>
+<ul>
+<li><code>cruzar fetch</code> → build the real client (refresh token from Keychain) → run
+    <code>fetch</code>. <code>cruzar fetch --login</code> → run the consent flow once and store the
+    refresh token. Prints a summary (downloaded / skipped / per-account counts), filenames only —
+    never message bodies (the no-real-values-in-logs invariant).</li>
+</ul>
+<h3>Schema / migration</h3>
+<ul>
+<li><code>schema.sql</code>: <code>fetched_messages</code> table; <code>db._migrate</code> guarded
+    <code>CREATE TABLE IF NOT EXISTS</code> is enough (new table, not an altered one) — parity test
+    confirms an upgraded DB matches.</li>
+</ul>
+
+<h2>Tests (offline; fake <code>GmailClient</code> injected — no network, no Keychain)</h2>
+<ul>
+<li><code>test_fetch_routes_attachments_by_allowlist</code> — two email accounts + a fake client
+    returning canned messages with PDF bytes; assert each PDF lands in its account's inbox folder
+    and a <code>fetched_messages</code> row is recorded.</li>
+<li><code>test_fetch_is_idempotent</code> — a second run with the same fake re-downloads nothing
+    (message_ids already recorded); the resume cursor holds.</li>
+<li><code>test_fetch_email_account_missing_match_errors</code> — an <code>email</code> account
+    without sender/subject is rejected loudly (fail-loud config validation).</li>
+<li><code>test_fetch_query_built_from_allowlist</code> — the query string includes sender, subject,
+    and <code>filename:pdf</code> (spy on the fake's <code>search</code>).</li>
+<li>A <code>conftest</code>-level guard so pipeline/other tests never construct the real client.</li>
+</ul>
+
+<h2>SPEC + README</h2>
+<ul>
+<li>SPEC: no ADR/AC change (fetch is already specified). Optionally note the
+    <code>fetched_messages</code> resume table where the Gmail rate-limit edge is described.</li>
+<li>README: document <code>cruzar fetch</code> + <code>--login</code>, the one-time Google Cloud
+    OAuth setup, the <code>gmail.client_secret_path</code> config and email-account fields
+    (<code>sender_match</code>/<code>subject_match</code>), and that tokens live only in the
+    Keychain (ADR-9). Update the <code>sources.yaml</code> template with an email example.</li>
+</ul>
+
+<h2>Out of scope</h2>
+<ul>
+<li>Scheduling (launchd/cron) — documented as user-run; not built.</li>
+<li>Splitting one email across multiple accounts (D6) — v1 limitation.</li>
+<li>Non-PDF attachments, non-Gmail providers, label/folder management.</li>
+<li>Auto-running <code>process</code> after fetch (separate step, ADR-4).</li>
+</ul>
+
+<h2>Open question for you</h2>
+<p>This is the largest slice and it isn't AC-gated. Happy to do it as <strong>one</strong> slice
+(recommended — the fake-injected tests keep it honest offline), or split into
+<strong>016a</strong> (auth + <code>--login</code> + Keychain, the ADR-9 core) and
+<strong>016b</strong> (allowlist query + download + dedup). Tell me if you'd prefer the split.</p>
+
+<h2>Definition of done</h2>
+<ul>
+<li>Offline fake-injected tests green; schema-parity + smoke green.</li>
+<li><code>uv run ruff check . &amp;&amp; uv run pyright &amp;&amp; uv run pytest</code> clean.</li>
+<li>README updated; <code>sources.yaml</code> template shows an email account.</li>
+<li><strong>Real-run gate (you):</strong> after the one-time Google Cloud setup,
+    <code>cruzar fetch --login</code> then <code>cruzar fetch</code> downloads a real statement to
+    <code>data/inbox/</code>, and a second run downloads nothing. Tokens appear in Keychain, not on
+    disk (AC5 holds).</li>
+</ul>
+
+</body>
+</html>

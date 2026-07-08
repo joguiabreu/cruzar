@@ -4,7 +4,7 @@ into SQLite each run; SQLite remains the source of truth (ADR-3).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -49,6 +49,23 @@ class ManualRate:
 
 
 @dataclass(frozen=True)
+class LlmConfig:
+    """Local LLM (Ollama) settings for categorization (ADR-2/13). ``enabled=False``
+    keeps the run fully offline (rule-only, zero calls)."""
+
+    enabled: bool = True
+    model: str = "qwen3:8b"
+    host: str = "http://localhost:11434"
+    min_confidence: float = 0.7  # below this a proposal is needs_review, not applied
+    timeout: float = 60.0  # per-request seconds; a down service fails fast regardless
+    # `cruzar anonymize` is not time-critical and benefits from a stronger model than
+    # categorization (better label-vs-value judgment). These default to `model`/`timeout`
+    # when unset; a bigger model here trades speed for fewer over-scrubbed labels.
+    anonymize_model: str | None = None
+    anonymize_timeout: float | None = None
+
+
+@dataclass(frozen=True)
 class Config:
     base_currency: str
     accounts: list[AccountConfig]
@@ -62,6 +79,7 @@ class Config:
     fx_offline: bool = False
     fx_access_key: str | None = None
     fx_timeout: float = 10.0
+    llm: LlmConfig = field(default_factory=LlmConfig)
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -81,6 +99,25 @@ def load_config(config_dir: str | Path) -> Config:
     flows_doc = _load_yaml(config_dir / "flows.yaml")
     fx_doc = _load_yaml(config_dir / "fx_rates.yaml")
     fx_settings: dict[str, Any] = app.get("fx") or {}
+    llm_settings: dict[str, Any] = app.get("llm") or {}
+    llm = LlmConfig(
+        enabled=bool(llm_settings.get("enabled", True)),
+        # Back-compat: fall back to the legacy top-level `llm_model` if no `llm:` block.
+        model=str(llm_settings.get("model", app.get("llm_model", "qwen3:8b"))),
+        host=str(llm_settings.get("host", "http://localhost:11434")),
+        min_confidence=float(llm_settings.get("min_confidence", 0.7)),
+        timeout=float(llm_settings.get("timeout_seconds", 60.0)),
+        anonymize_model=(
+            str(llm_settings["anonymize_model"])
+            if llm_settings.get("anonymize_model")
+            else None
+        ),
+        anonymize_timeout=(
+            float(llm_settings["anonymize_timeout_seconds"])
+            if llm_settings.get("anonymize_timeout_seconds")
+            else None
+        ),
+    )
 
     accounts = [AccountConfig(**entry) for entry in sources.get("accounts", [])]
     fx_rate_rows: list[Any] = fx_doc.get("rates") or []
@@ -111,4 +148,5 @@ def load_config(config_dir: str | Path) -> Config:
         fx_offline=bool(fx_settings.get("offline", False)),
         fx_access_key=fx_settings.get("access_key"),
         fx_timeout=float(fx_settings.get("timeout_seconds", 10.0)),
+        llm=llm,
     )
