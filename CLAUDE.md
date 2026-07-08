@@ -69,14 +69,13 @@ product behavior, `docs/SPEC.md` wins; ask before deviating from either.
 
 ## Workflow
 
-- **Plan first** for any task with 3+ steps. While we discuss, the plan is an
-  **HTML** file `docs/plans/plan_NNN_<slug>.html` (NEVER at the repo root) — I
-  read and annotate the HTML, not Markdown. Iterate on the HTML through review.
-  Once decisions are settled, **delete the `.html` and write the final
-  `docs/plans/plan_NNN_<slug>.md`** from it (the committed plan of record). Write
-  the plan, then STOP — do not implement until I reply "address notes, implement."
-  - **Plan HTML is dark mode by default** (dark background, light text) unless I
-    ask otherwise.
+- **Run the grilling loop** (`/grill` skill) for any task with 3+ steps or that
+  touches an AC/ADR: I grill you for context, self-red-team a thin draft, you
+  grill the survivor live (with a walkthrough of risky code paths), I finalize
+  the plan, then after implementation I close by grilling the result against it.
+  The plan file `docs/plans/plan_NNN_<slug>.md` (never repo root) is created at
+  the *start* and is the running checkpoint + final record. STOP at finalize — do
+  not implement until I reply "address notes, implement." Why: `docs/DEVELOPMENT.md`.
 - **Never list a fixture/oracle sign-off as a plan decision.** It is already
   mandated (see Testing conventions) — not a choice. Don't put it in a plan's
   decisions; just propose the obviously-fake table inline at implementation time
@@ -163,10 +162,11 @@ product behavior, `docs/SPEC.md` wins; ask before deviating from either.
 ## Notes
 
 - `@docs/SPEC.md` is the full specification. `@docs/` holds any split-out design notes.
-- Plans: **always** live in `docs/plans/` — never at the repo root. Discuss on the
-  `.html` (I annotate that), then on sign-off delete it and write the final
-  `.md` as the committed plan of record (see Workflow). Read existing `.md` plans
-  there for prior-slice decisions before planning a new slice.
+- Plans: **always** live in `docs/plans/` — never at the repo root. The grilling
+  loop creates `plan_NNN_<slug>.md` at the start and finalizes it on sign-off (see
+  Workflow / `docs/DEVELOPMENT.md`); it is the committed plan of record. Read
+  existing `.md` plans there for prior-slice decisions before planning a new slice.
+  (Pre-existing `.html` plans predate the loop and get converted as we revisit them.)
 - Keep this file under ~150 lines. When the agent makes the same mistake twice,
   the fix is a new rule here — not re-explaining in chat. (That habit is the
   whole point: engineer the harness so the mistake can't recur.)
