@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plan 027 — Manual is-transfer override</title>
+<style>
+  :root { color-scheme: dark; }
+  body { background:#0f1115; color:#d7dbe0; font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; max-width:880px; margin:0 auto; padding:2.5rem 1.5rem 6rem; }
+  h1 { color:#fff; font-size:1.7rem; border-bottom:1px solid #2a2f3a; padding-bottom:.5rem; }
+  h2 { color:#8ab4f8; margin-top:2.2rem; font-size:1.25rem; }
+  h3 { color:#c8a8ff; font-size:1.05rem; margin-top:1.4rem; }
+  code { background:#1b1f27; padding:.12em .4em; border-radius:4px; font-size:.9em; color:#f0c674; }
+  pre { background:#1b1f27; padding:1rem; border-radius:8px; overflow-x:auto; border:1px solid #2a2f3a; }
+  pre code { background:none; color:#d7dbe0; padding:0; }
+  table { border-collapse:collapse; width:100%; margin:1rem 0; }
+  th,td { border:1px solid #2a2f3a; padding:.5rem .7rem; text-align:left; vertical-align:top; }
+  th { background:#1b1f27; color:#fff; }
+  .decision { background:#1a1410; border:1px solid #5a4420; border-left:4px solid #f0a020; padding:.8rem 1rem; border-radius:6px; margin:1rem 0; }
+  .decision .tag { color:#f0a020; font-weight:700; font-size:.8rem; letter-spacing:.04em; text-transform:uppercase; }
+  .warn { background:#1a1012; border:1px solid #5a2424; border-left:4px solid #f05050; padding:.8rem 1rem; border-radius:6px; margin:1rem 0; }
+  .rec { color:#3fbf5f; font-weight:600; }
+  .muted { color:#8a909a; }
+  ul,ol { padding-left:1.3rem; } li { margin:.3rem 0; }
+</style>
+</head>
+<body>
+
+<h1>Plan 027 — Manual is-transfer override</h1>
+
+<p><strong>Slice goal.</strong> Let me say "this <em>is</em> a transfer" or "this is <em>not</em>
+a transfer" by hand, and have that decision survive the per-run transfer recompute. This is
+<strong>Phase 2</strong> of the manual-override roadmap (after plan 026). It closes the gap the
+IPS counterparty-transfer case exposed: a line wrongly paired as a transfer (so excluded from
+Spent) — or a real transfer the detector missed — currently can't be corrected.</p>
+
+<div class="warn">
+<strong>This touches transfer detection — stop-and-ask territory.</strong>
+<code>transfers.py</code> deliberately has <em>no</em> manual override today: <code>is_transfer</code>
+is fully recomputed every run (rule patterns + pairing), unlike <code>merchant_source</code>.
+Adding a manual override changes that contract, so D1/D2 below need explicit sign-off, and the
+SPEC's transfer section + relevant ADR get a note. <code>is_transfer</code> drives Earned/Spent
+exclusion (AC19/AC21), so this must not silently shift those aggregates.</p>
+</div>
+
+<h2>Why category alone (plan 026) isn't enough</h2>
+<p>A transfer is excluded from Earned/Spent entirely, so labeling a transfer's <em>category</em>
+"Dining" (plan 026) would NOT make it appear as Dining spending — it's still excluded. To turn a
+mis-paired transfer into real spending you must first flip <code>is_transfer = 0</code>. So the
+full one-off fix is often "un-transfer it (027) <em>and</em> set its category (026)" — the two
+plans compose.</p>
+
+<h2>Decisions needing your sign-off</h2>
+
+<div class="decision">
+<span class="tag">D1 — a protected manual flag the recompute respects</span>
+<p>Add a manual override that the transfer recompute treats as authoritative: a row with a manual
+<code>is_transfer</code> decision is neither re-paired nor pattern-flipped. <span class="rec">
+Recommended</span> mechanism: a nullable <code>transactions.is_transfer_manual</code>
+(<code>1</code>/<code>0</code>/NULL) — NULL means "auto" (today's behavior); set means "honor
+this". The recompute writes the effective <code>is_transfer</code> = <code>COALESCE(is_transfer_manual,
+&lt;computed&gt;)</code>. Guarded migration; default NULL keeps every existing row identical.</p>
+</div>
+
+<div class="decision">
+<span class="tag">D2 — pairing must not "use up" a manually-forced leg incorrectly</span>
+<p>Pairing matches opposite-signed legs (AC21). If I force one leg's <code>is_transfer</code>,
+decide how the recompute treats its partner: a forced <em>transfer</em> leg should still let its
+true partner pair normally; a forced <em>non</em>-transfer leg must be excluded from pairing so it
+isn't re-flipped. Spell out the interaction so AC21 stays green and no aggregate moves unexpectedly.</p>
+</div>
+
+<div class="decision">
+<span class="tag">D3 — CLI surface, consistent with 026</span>
+<p>Extend the plan-026 command rather than add a new one:
+<code>cruzar categorize &lt;id...&gt; --as-transfer | --not-transfer | --auto</code>
+(<code>--auto</code> clears the override). Keeps one verb for "fix this line".</p>
+</div>
+
+<h2>Design / modules</h2>
+<ul>
+<li><strong><code>schema.sql</code> + <code>db._migrate</code></strong> — nullable
+<code>is_transfer_manual</code> (guarded migration; parity test green).</li>
+<li><strong><code>transfers.py</code></strong> — recompute honors the manual flag: exclude
+forced rows from re-decision, set effective <code>is_transfer</code> via COALESCE, keep pairing
+correct (D2).</li>
+<li><strong><code>cli.py</code></strong> — <code>--as-transfer/--not-transfer/--auto</code> on
+<code>categorize</code>.</li>
+</ul>
+
+<h2>Tests</h2>
+<ul>
+<li>Force <code>--not-transfer</code> on a mis-paired leg → it re-enters Spent; its partner is
+handled per D2; a re-run keeps the manual decision (not recomputed).</li>
+<li>Force <code>--as-transfer</code> on a missed transfer → excluded from Earned/Spent.</li>
+<li><code>--auto</code> restores recompute.</li>
+<li>AC19/AC21 fixtures stay green; schema-parity + smoke green.</li>
+</ul>
+
+<h2>SPEC / ADR-AC flags</h2>
+<ul>
+<li><strong>Changes the transfer-detection contract</strong> (recompute is no longer
+unconditional) — SPEC transfer section + the transfer ADR get an amendment; confirm before
+building.</li>
+<li>Guards AC19/AC21 — tests must show aggregates only move where I explicitly overrode.</li>
+<li>Schema migration (guarded <code>_migrate</code> + parity).</li>
+</ul>
+
+<h2>Out of scope</h2>
+<ul>
+<li>Category override (plan 026) and NL phrasing (plan 028).</li>
+<li>Auto-learning a transfer pattern from a manual decision (that's a rule edit in
+<code>flows.yaml</code>, done by hand).</li>
+</ul>
+
+<h2>Definition of done</h2>
+<ul>
+<li>A manual is-transfer decision survives the per-run recompute and moves only the lines I
+overrode; <code>--auto</code> restores automatic behavior.</li>
+<li>AC19/AC21 + schema-parity + smoke green; <code>ruff</code>/<code>pyright</code>/<code>pytest</code>
+clean; SPEC updated.</li>
+</ul>
+
+</body>
+</html>

@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plan 029 — Self-generating parser (autonomous parser-dev harness)</title>
+<style>
+  :root { color-scheme: dark; }
+  body { background:#0f1115; color:#d7dbe0; font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; max-width:880px; margin:0 auto; padding:2.5rem 1.5rem 6rem; }
+  h1 { color:#fff; font-size:1.7rem; border-bottom:1px solid #2a2f3a; padding-bottom:.5rem; }
+  h2 { color:#8ab4f8; margin-top:2.2rem; font-size:1.25rem; }
+  h3 { color:#c8a8ff; font-size:1.05rem; margin-top:1.4rem; }
+  code { background:#1b1f27; padding:.12em .4em; border-radius:4px; font-size:.9em; color:#f0c674; }
+  pre { background:#1b1f27; padding:1rem; border-radius:8px; overflow-x:auto; border:1px solid #2a2f3a; }
+  pre code { background:none; color:#d7dbe0; padding:0; }
+  table { border-collapse:collapse; width:100%; margin:1rem 0; }
+  th,td { border:1px solid #2a2f3a; padding:.5rem .7rem; text-align:left; vertical-align:top; }
+  th { background:#1b1f27; color:#fff; }
+  .decision { background:#1a1410; border:1px solid #5a4420; border-left:4px solid #f0a020; padding:.8rem 1rem; border-radius:6px; margin:1rem 0; }
+  .decision .tag { color:#f0a020; font-weight:700; font-size:.8rem; letter-spacing:.04em; text-transform:uppercase; }
+  .warn { background:#1a1012; border:1px solid #5a2424; border-left:4px solid #f05050; padding:.8rem 1rem; border-radius:6px; margin:1rem 0; }
+  .rec { color:#3fbf5f; font-weight:600; }
+  .muted { color:#8a909a; }
+  ul,ol { padding-left:1.3rem; } li { margin:.3rem 0; }
+</style>
+</head>
+<body>
+
+<h1>Plan 029 — Self-generating parser <span class="muted">(autonomous parser-dev harness)</span></h1>
+
+<p><strong>Goal.</strong> When a statement arrives from an institution cruzar has no parser
+for, an operator-run tool detects the gap, produces a privacy-safe anonymized sample
+(plan 030), dispatches a Claude Code harness (plan → review → implement → verify) that
+drafts a new parser + fixture against that sample, and opens a <strong>PR for me to
+review</strong>. I stay the merge gate; nothing lands unattended.</p>
+
+<div class="warn">
+<strong>This introduces new ADRs and sits OUTSIDE the money path.</strong> An autonomous
+parser-dev subsystem is a decision, not a detail — approve the ADRs before we build. And it
+is <em>operator-run tooling beside cruzar, never wired into <code>pipeline.process</code></em>.
+Wiring it into the pipeline would break "the offline suite must STAY offline" and turn a
+statement ingest into a network/agent-spawning event. The pipeline's only job here is to
+<em>emit a clean signal</em>; the harness is a separate command I run.</p>
+
+<h2>The trigger (grounded in current code)</h2>
+<p>Two distinct signals already exist in <code>ingest_inbox</code> (pipeline.py). We build on
+the intentional one:</p>
+<table>
+<tr><th>Situation</th><th>Current outcome</th><th>Use as trigger?</th></tr>
+<tr><td>PDF in a folder with no configured account</td><td><code>unresolved_account</code></td>
+<td>No — ambiguous (could be a misfiled file)</td></tr>
+<tr><td>Account declared with an <code>institution</code> not in <code>PARSERS</code></td>
+<td><code>get_parser</code> raises <code>ValueError("no parser registered …")</code> →
+caught as <code>parse_failed</code></td><td class="rec">Yes — an explicit "this is BankX, build it" signal</td></tr>
+<tr><td>Known parser, degraded layout</td><td><code>ExtractionFallback</code> → LLM extractor</td>
+<td>No — that's a different, existing path</td></tr>
+</table>
+
+<div class="decision">
+<span class="tag">D1 — a distinct <code>no_parser</code> status</span>
+<p>Today "no parser registered" is swallowed into <code>parse_failed</code> alongside genuine
+parser bugs. The harness must never confuse "I haven't built BankX yet" (go draft one) with
+"the ActivoBank parser threw on real input" (that's a loud bug to fix, not to autogenerate
+around). <span class="rec">Recommendation:</span> distinguish the missing-parser case into its
+own <code>processed_files.status = 'no_parser'</code>. This is a schema/behavior change (guarded
+migration per the schema invariant) and touches pipeline flow — <strong>flagging, not deciding.</strong></p>
+</div>
+
+<h2>Architecture — the operator loop</h2>
+<p>A thin "shell" driven by the local model. It routes and reports; it does <em>not</em> reason
+about parsing (Claude does that). Stages:</p>
+<ol>
+<li><strong>Detect.</strong> After a <code>cruzar process</code> run, scan <code>processed_files</code>
+for <code>no_parser</code> rows. For each, resolve the offending source PDF in gitignored
+<code>/data/</code> and the declared <code>institution</code>.</li>
+<li><strong>Anonymize (plan 030).</strong> Produce a structurally-faithful, value-scrubbed sample.
+<em>Only this output is allowed to cross to Claude.</em> If anonymization fails its safety gate,
+abort this institution — never fall back to the raw document.</li>
+<li><strong>Dispatch the harness.</strong> Spawn Claude Code agents on a fresh branch/worktree:
+<em>plan</em> → <em>review the plan</em> → <em>implement</em> → <em>verify</em>. Inputs: the
+anonymized sample, <code>SPEC.md</code> + the ADR invariants as the rubric, and the parser
+contract (<code>parse(pdf_path) -> ParsedStatement</code>, deterministic top-to-bottom order,
+register in <code>parsers/__init__.py</code>).</li>
+<li><strong>Verify.</strong> The harness must get its own AC/parser fixture test green plus
+<code>ruff</code> + <code>pyright</code> + full suite (the repo's existing "done" bar).</li>
+<li><strong>Open a PR.</strong> One institution, one branch, one PR, <em>no auto-merge</em>. The PR
+body surfaces the proposed obviously-fake transaction table for my oracle sign-off (see below).</li>
+</ol>
+
+<h2>The human-in-the-loop boundary (the crux)</h2>
+<div class="warn">
+<strong>The harness produces a reviewable draft, never a merged parser.</strong> CLAUDE.md forbids
+self-generating the oracle: a parser that agrees with a fixture it also wrote proves nothing. So
+the harness may check <em>internal invariants</em> (Decimal not float, debits negative, ordering,
+dedup, ruff/pyright) but the committed fixture stays <strong>hand-authored, obviously-fake, and
+signed off by me</strong> — that is a standing procedure, not a decision this plan makes. The PR
+review <em>is</em> the oracle step: the PR presents "here is what I extracted; confirm these
+numbers match your real statement," and I approve or send back.</p>
+</div>
+
+<h2>Bounded autonomy</h2>
+<ul>
+<li>One <code>no_parser</code> institution per invocation → one branch → one PR. No batching, no retries into main.</li>
+<li>Runs only when I invoke it — never auto-fired by <code>process</code>.</li>
+<li>The harness works in an isolated worktree; the operator loop never touches the real DB or <code>/reports/</code>.</li>
+<li>Documents only — no images/OCR (explicitly out of scope for now).</li>
+</ul>
+
+<h2>What the verify agent checks (rubric from existing ADRs)</h2>
+<ul>
+<li>Money is <code>Decimal</code>, parsed straight from strings; no <code>float</code> anywhere.</li>
+<li>Amounts native-currency, signed (debits negative); locale comma-decimals normalized at the parser boundary only.</li>
+<li>Deterministic top-to-bottom emission; no merging/coalescing of distinct lines; wrapped descriptions reassembled, not merged.</li>
+<li>Registered in <code>parsers/__init__.py</code>; implements the <code>parse</code> contract; one module per institution.</li>
+<li><code>ruff</code> clean, <code>pyright</code> strict clean, full suite green.</li>
+</ul>
+
+<h2>Slices</h2>
+<ol>
+<li><strong>Slice 1 — Anonymizer (plan 030).</strong> Foundational and independently useful; the
+riskiest privacy component. Build and trust it first. Nothing crosses to Claude until it's solid.</li>
+<li><strong>Slice 2 — Detect + dispatch.</strong> <code>no_parser</code> status (D1), the operator
+loop, and harness dispatch on an anonymized sample into a worktree.</li>
+<li><strong>Slice 3 — PR + review packaging.</strong> Branch/PR creation, the oracle-sign-off PR
+body, no-auto-merge guardrails.</li>
+</ol>
+
+<div class="decision">
+<span class="tag">D2 — where the code lives</span>
+<p>This is dev/meta tooling, not part of the <code>cruzar</code> ingest package. <span class="rec">Recommendation:</span>
+a separate top-level location (e.g. <code>tools/parsergen/</code> or <code>scripts/</code>) so it
+never imports into the money path and never ships in the pipeline. Keeps "no new top-level modules
+without a reason" satisfied — the reason is isolation from the pipeline.</p>
+</div>
+
+<div class="decision">
+<span class="tag">D3 — privacy posture</span>
+<p>Even anonymized, this sends a derived financial document off-machine to Claude. For a "local,
+privacy-preserving" app that's a posture change. <span class="rec">Recommendation:</span> explicit
+per-run opt-in, never automatic; the anonymized sample is the <em>only</em> artifact allowed to
+leave, enforced by plan 030's safety gate.</p>
+</div>
+
+<h2>Risks</h2>
+<ul>
+<li><strong>Plausible-but-wrong parser.</strong> Parsers fail silently (sign flips, comma-decimal
+mishandling, wrapped-line merges). The draft will look right and pass its own fixture. My PR review
+is load-bearing — the PR must make the tricky cases easy to check.</li>
+<li><strong>Anonymized sample must faithfully represent the real format</strong> (plan 030) or the
+parser is built against a phantom layout and fails on real input.</li>
+<li><strong>Scope creep into the pipeline.</strong> Guard against anyone wiring detection into
+<code>process</code>; it stays an operator command.</li>
+</ul>
+
+<h2>Out of scope</h2>
+<ul>
+<li>Images / scanned statements / OCR (documents with a text layer only, for now).</li>
+<li>Auto-merge or unattended landing of any parser.</li>
+<li>Non-parser institutions (fetchers, APIs).</li>
+</ul>
+
+</body>
+</html>

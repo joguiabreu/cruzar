@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plan 028 — Natural-language categorize (optional sugar)</title>
+<style>
+  :root { color-scheme: dark; }
+  body { background:#0f1115; color:#d7dbe0; font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; max-width:880px; margin:0 auto; padding:2.5rem 1.5rem 6rem; }
+  h1 { color:#fff; font-size:1.7rem; border-bottom:1px solid #2a2f3a; padding-bottom:.5rem; }
+  h2 { color:#8ab4f8; margin-top:2.2rem; font-size:1.25rem; }
+  h3 { color:#c8a8ff; font-size:1.05rem; margin-top:1.4rem; }
+  code { background:#1b1f27; padding:.12em .4em; border-radius:4px; font-size:.9em; color:#f0c674; }
+  pre { background:#1b1f27; padding:1rem; border-radius:8px; overflow-x:auto; border:1px solid #2a2f3a; }
+  pre code { background:none; color:#d7dbe0; padding:0; }
+  table { border-collapse:collapse; width:100%; margin:1rem 0; }
+  th,td { border:1px solid #2a2f3a; padding:.5rem .7rem; text-align:left; vertical-align:top; }
+  th { background:#1b1f27; color:#fff; }
+  .decision { background:#1a1410; border:1px solid #5a4420; border-left:4px solid #f0a020; padding:.8rem 1rem; border-radius:6px; margin:1rem 0; }
+  .decision .tag { color:#f0a020; font-weight:700; font-size:.8rem; letter-spacing:.04em; text-transform:uppercase; }
+  .warn { background:#1a1012; border:1px solid #5a2424; border-left:4px solid #f05050; padding:.8rem 1rem; border-radius:6px; margin:1rem 0; }
+  .rec { color:#3fbf5f; font-weight:600; }
+  .muted { color:#8a909a; }
+  ul,ol { padding-left:1.3rem; } li { margin:.3rem 0; }
+</style>
+</head>
+<body>
+
+<h1>Plan 028 — Natural-language categorize <span class="muted">(optional sugar)</span></h1>
+
+<p><strong>Slice goal.</strong> Let me <em>say</em> "classify 122344 as Fuel" or "mark 12345 and
+67890 as not transfers" in English, instead of remembering the exact flags. This is
+<strong>Phase 3</strong> — pure ergonomics over the deterministic commands in plans 026/027. It
+is explicitly <em>optional</em>: ship only if the CLI proves tedious in daily use.</p>
+
+<div class="warn">
+<strong>The model must NOT write — it only drafts.</strong> <code>cruzar ask</code> is read-only
+(ADR-17); mutations stay deterministic (ADR-1). The safe shape: the planner maps English to a
+structured <code>CategorizeCommand{ids, category?, transfer?}</code> (same constrained-output
+trick as the query planner), the command is <strong>printed for confirmation</strong>, and only
+on an explicit "yes" does the deterministic executor from 026/027 apply it. Model proposes →
+you confirm → Python writes. This is the only way NL is acceptable here.</p>
+
+<div class="decision">
+<span class="tag">D0 — do we even want this? (decide first)</span>
+<p>For exact ids + a closed category vocabulary, typing <code>cruzar categorize 123 456
+--category Dining</code> is faster and safer than NL, and a 3B model mis-reading an id is a real
+risk even with confirmation. <span class="rec">Recommendation: defer</span> — build 026/027,
+live with the CLI, and only do 028 if the friction is real. This plan exists so the decision and
+the safe design are on record, not to greenlight it.</p>
+</div>
+
+<div class="decision">
+<span class="tag">D1 — separate write-mode, not inside `ask`</span>
+<p>Keep <code>ask</code> a pure reader. Put NL categorize behind its own verb (e.g.
+<code>cruzar categorize --say "mark 123 as Fuel"</code>) so the read-only port stays intact and
+the write surface is explicit. ADR-17 is untouched (no write ever flows through <code>ask</code>).</p>
+</div>
+
+<div class="decision">
+<span class="tag">D2 — mandatory confirmation, echoing exact ids + resolved category</span>
+<p>The drafted command is shown as a concrete preview — "Set txn 122344 (€xx.xx, 2026-05-10,
+'…') → Fuel. Apply? [y/N]" — so a mis-parsed id or category is caught by eye before any write.
+Non-interactive use requires <code>--yes</code>. Never auto-apply a model-drafted mutation.</p>
+</div>
+
+<h2>Design / modules (if built)</h2>
+<ul>
+<li><strong><code>analytics.py</code> (or a sibling)</strong> — a <code>CategorizeCommand</code>
+pydantic model = the constrained planner output; reuse the Ollama planner pattern from
+<code>llm.ollama_query_planner</code>.</li>
+<li><strong>executor</strong> — calls the deterministic <code>set_manual</code> /
+<code>is_transfer</code> functions from plans 026/027 after confirmation. No new write logic.</li>
+<li><strong><code>cli.py</code></strong> — <code>categorize --say "…"</code> + <code>--yes</code>.</li>
+</ul>
+
+<h2>Tests</h2>
+<ul>
+<li>Fake planner: "mark 123 as Fuel" → the right <code>CategorizeCommand</code>; executor (with
+<code>--yes</code>) applies it; without confirmation, nothing is written.</li>
+<li>A drafted command referencing an unknown id is rejected at execution (the deterministic layer
+validates, not the model).</li>
+<li>Suite stays offline (fake planner; no Ollama).</li>
+</ul>
+
+<h2>ADR / AC flags</h2>
+<ul>
+<li><code>ask</code> stays read-only — ADR-17 unchanged because the write lives in a separate
+verb. Confirm that framing before building.</li>
+<li>No new financial AC; correctness is inherited from 026/027's deterministic executor.</li>
+</ul>
+
+<h2>Out of scope</h2>
+<ul>
+<li>Anything the model could decide unconfirmed. Multi-turn dialogue. Free-form rules ("always
+treat X as Y" — that's a <code>merchants.yaml</code> edit).</li>
+</ul>
+
+<h2>Definition of done <span class="muted">(only if D0 = build)</span></h2>
+<ul>
+<li>NL phrase → drafted command → confirm → deterministic apply; no model-authored write ever
+lands unconfirmed; <code>ask</code> remains read-only.</li>
+<li>Offline suite green; <code>ruff</code>/<code>pyright</code>/<code>pytest</code> clean.</li>
+</ul>
+
+</body>
+</html>

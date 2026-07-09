@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plan 031 — Anonymizer model/prompt eval (turn vibes into numbers)</title>
+<style>
+  :root { color-scheme: dark; }
+  body { background:#0f1115; color:#d7dbe0; font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; max-width:880px; margin:0 auto; padding:2.5rem 1.5rem 6rem; }
+  h1 { color:#fff; font-size:1.7rem; border-bottom:1px solid #2a2f3a; padding-bottom:.5rem; }
+  h2 { color:#8ab4f8; margin-top:2.2rem; font-size:1.25rem; }
+  h3 { color:#c8a8ff; font-size:1.05rem; margin-top:1.4rem; }
+  code { background:#1b1f27; padding:.12em .4em; border-radius:4px; font-size:.9em; color:#f0c674; }
+  pre { background:#1b1f27; padding:1rem; border-radius:8px; overflow-x:auto; border:1px solid #2a2f3a; }
+  pre code { background:none; color:#d7dbe0; padding:0; }
+  table { border-collapse:collapse; width:100%; margin:1rem 0; }
+  th,td { border:1px solid #2a2f3a; padding:.5rem .7rem; text-align:left; vertical-align:top; }
+  th { background:#1b1f27; color:#fff; }
+  .decision { background:#1a1410; border:1px solid #5a4420; border-left:4px solid #f0a020; padding:.8rem 1rem; border-radius:6px; margin:1rem 0; }
+  .decision .tag { color:#f0a020; font-weight:700; font-size:.8rem; letter-spacing:.04em; text-transform:uppercase; }
+  .warn { background:#1a1012; border:1px solid #5a2424; border-left:4px solid #f05050; padding:.8rem 1rem; border-radius:6px; margin:1rem 0; }
+  .rec { color:#3fbf5f; font-weight:600; }
+  .muted { color:#8a909a; }
+  ul,ol { padding-left:1.3rem; } li { margin:.3rem 0; }
+</style>
+</head>
+<body>
+
+<h1>Plan 031 — Anonymizer model/prompt eval <span class="muted">(turn vibes into numbers)</span></h1>
+
+<p><strong>Goal.</strong> A small, hand-run harness that measures how well a given model + prompt
+anonymizes a statement — <em>PII recall</em> (leaks), <em>over-scrub rate</em> (fidelity cost), and
+<em>latency</em> — over a labeled synthetic set, so "which model / which prompt" becomes a decision
+with evidence instead of a vibe. Mirrors <code>scripts/eval_categorization.py</code> /
+<code>plan_020</code>, applied to plan 030's anonymizer.</p>
+
+<div class="warn">
+<strong>Why this exists (Exhibit A: gemma4:12b).</strong> It was picked from paper specs
+(non-thinking, multilingual, benchmark-friendly) and failed empirically — never terminated under
+Ollama's structured JSON, stalled the queue, wasted ~40 min, and even filled the disk. A one-shot
+eval would have flagged it in seconds. Model choice here <em>must</em> be data-driven; this makes
+that cheap and repeatable.</p>
+
+<h2>What it measures — and why the metric is the lesson</h2>
+<p>Anonymization has an <strong>asymmetric cost structure</strong>, and the harness is built around it:</p>
+<table>
+<tr><th>Metric</th><th>Meaning</th><th>Weight</th></tr>
+<tr><td><strong>PII recall</strong></td><td>of the labeled personal-data tokens, how many did the
+pipeline replace? A miss = a real leak.</td><td class="rec">dominant — this is the number</td></tr>
+<tr><td>Over-scrub rate</td><td>of non-PII text tokens, how many were replaced? Costs fidelity.</td>
+<td>secondary — over-scrubbing is <em>safe</em></td></tr>
+<tr><td>Latency</td><td>wall time per document.</td><td>practicality axis</td></tr>
+<tr><td>Clean / errored</td><td>did the model terminate and return valid JSON at all?</td>
+<td>a hard gate — a non-terminating model (gemma) fails here first</td></tr>
+</table>
+<p>The takeaway worth internalizing: <strong>the metric must match the task's cost structure.</strong>
+Here a missed name is catastrophic and an over-scrubbed label is harmless, so recall &gt;&gt; precision —
+the opposite weighting you'd use for spam filtering. Building the harness forces you to feel that.</p>
+
+<div class="decision">
+<span class="tag">D1 — isolate the MODEL's contribution</span>
+<p>The deterministic layer (amounts, dates, NIF, cards, postal codes, denylist identity) is scrubbed
+regardless of model, so counting it would wash out model differences. <span class="rec">Recommendation:</span>
+label and score recall on the <strong>model-dependent PII only</strong> — free-text names, street
+words, localities the rules can't shape-match. That number is what actually moves when you swap models
+or edit the prompt.</p>
+</div>
+
+<h2>The eval set</h2>
+<p>A handful of <strong>synthetic</strong> statements (receipt-style + bank-style) with realistic-but-
+<em>obviously-fake</em> names/addresses, plus a labels file marking which tokens are model-dependent
+PII (the ground truth). Recall/precision are then plain set arithmetic against the labels — no
+LLM-as-judge, no subjectivity.</p>
+
+<div class="decision">
+<span class="tag">D2 — the eval set is COMMITTED (unlike the categorization one)</span>
+<p><code>eval_categorization.py</code>'s labels are your <em>real</em> descriptions, so they're gitignored.
+Here the eval docs are <strong>synthetic and obviously-fake</strong>, so they can (and should) be
+committed — reproducible, shareable, and a regression guard for prompt changes. <span class="rec">Recommendation:</span>
+commit them under <code>tests/fixtures/anon_eval/</code> (PDF + labels), authored the usual way
+(hand-authored fake table, my sign-off). Never a real statement.</p>
+</div>
+
+<h2>How it compares models</h2>
+<pre><code>uv run python scripts/eval_anonymizer.py --models qwen2.5:3b qwen2.5:14b
+
+model         PII recall   over-scrub   latency/doc   status
+qwen2.5:3b       7/11        4%            34s          ok
+qwen2.5:14b     10/11        6%           2m10s         ok
+gemma4:12b        -           -             -          ERROR (no termination)</code></pre>
+<p>Loop the candidate models, run each over the eval set through the real classifier, tabulate. Same
+"hits Ollama, so NOT in pytest" stance as <code>eval_categorization</code> — it's an operator tool.</p>
+
+<h2>What it reuses / respects</h2>
+<ul>
+<li>Pattern + conventions from <code>scripts/eval_categorization.py</code> (standalone script, config-
+driven, by-hand, reports a task-specific failure number).</li>
+<li>The anonymizer's own <code>Classifier</code> + <code>detect_value_type</code> + force-replace path —
+it scores the <em>real</em> pipeline, not a reimplementation.</li>
+<li><strong>Offline suite stays offline</strong>: the script is not imported by pytest; it hits the live model.</li>
+<li>No real values anywhere — synthetic fixtures only.</li>
+</ul>
+
+<div class="decision">
+<span class="tag">D3 — scope: a tool, not a framework</span>
+<p><span class="rec">Recommendation:</span> ~5 eval docs, three numbers, one table. Resist building a
+generic eval framework. If it grows tentacles (weighting knobs, plugins, HTML reports), it's
+over-built — the value is the discipline, not the software.</p>
+</div>
+
+<h2>Double duty: prompt A/B + regression guard</h2>
+<p>The same harness A/B-tests a <em>prompt</em> change on a fixed model (did recall go up without
+over-scrub exploding?) — exactly how <code>eval_categorization</code> drives down junk-drawer FPs. So
+it also guards against a future prompt edit silently regressing name-catching.</p>
+
+<h2>Slice</h2>
+<ol>
+<li>Synthetic eval fixtures + labels (hand-authored fake, signed off).</li>
+<li><code>scripts/eval_anonymizer.py</code>: load set, run each model, compute recall/over-scrub/latency,
+print the table + per-doc misses (which PII tokens leaked).</li>
+<li>README note under the anonymize section + a short mention in <code>plan_030</code>.</li>
+</ol>
+
+<h2>Non-goals</h2>
+<ul>
+<li>Not a general model benchmark — it answers "which model/prompt for <em>this</em> task."</li>
+<li>No LLM-as-judge (the labels are ground truth; keep it deterministic).</li>
+<li>Not wired into the pipeline or pytest.</li>
+</ul>
+
+<h2>Open questions</h2>
+<ul>
+<li>How many eval docs is "enough" to be meaningful without being a chore? (start ~5, grow if noisy)</li>
+<li>Do we score third-party counterparty names separately from the account-holder pattern? (they're the
+hardest recall case — maybe a column of their own)</li>
+</ul>
+
+</body>
+</html>
